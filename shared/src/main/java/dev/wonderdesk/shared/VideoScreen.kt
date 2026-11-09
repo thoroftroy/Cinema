@@ -28,15 +28,23 @@ fun VideoScreen() {
     val op = rememberOperation()
     var uriText by rememberSaveable { mutableStateOf(activity.intent.data?.toString() ?: prefs.getString("last", null)) }
     var speed by remember { mutableFloatStateOf(prefs.getFloat("speed", 1f)) }
+    var repeat by remember { mutableStateOf(prefs.getBoolean("repeat", false)) }
+    var loadedUri by remember { mutableStateOf<String?>(null) }
+    val currentUri by rememberUpdatedState(loadedUri)
     val player = remember { ExoPlayer.Builder(context).setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true).setHandleAudioBecomingNoisy(true).build() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { value ->
         value?.let { context.keepRead(it); uriText = it.toString(); prefs.edit().putString("last", uriText).apply() }
     }
     LaunchedEffect(uriText) {
+        loadedUri?.let { previous ->
+            if (previous != uriText) prefs.edit().putLong("position:$previous", player.currentPosition).apply()
+        }
         uriText?.let {
             player.setMediaItem(MediaItem.fromUri(Uri.parse(it)), prefs.getLong("position:$it", 0L))
             player.setPlaybackSpeed(speed)
+            player.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             player.prepare()
+            loadedUri = it
             op.notice("Video loaded. Tap play in the video controls. Codec support depends on the device.")
         }
     }
@@ -48,11 +56,14 @@ fun VideoScreen() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 player.pause()
-                uriText?.let { prefs.edit().putLong("position:$it", player.currentPosition).apply() }
+                currentUri?.let { prefs.edit().putLong("position:$it", player.currentPosition).apply() }
             }
         }
         activity.lifecycle.addObserver(observer)
-        onDispose { activity.lifecycle.removeObserver(observer); player.removeListener(listener); player.release() }
+        onDispose {
+            currentUri?.let { prefs.edit().putLong("position:$it", player.currentPosition).apply() }
+            activity.lifecycle.removeObserver(observer); player.removeListener(listener); player.release()
+        }
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -66,6 +77,11 @@ fun VideoScreen() {
                 TextButton(onClick = { speed = value; player.setPlaybackSpeed(value); prefs.edit().putFloat("speed", value).apply() }) { Text(if (speed == value) "• ${value}×" else "${value}×") }
             }
         }
+        TextButton(onClick = {
+            repeat = !repeat
+            player.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+            prefs.edit().putBoolean("repeat", repeat).apply()
+        }) { Text(if (repeat) "Repeat: On" else "Repeat: Off") }
         Text("Touch controls: play/pause, seek and track/subtitle settings. Leaves originals unchanged. Playback pauses when you leave; no background video, clipping or editor yet.", style = MaterialTheme.typography.bodySmall)
     }
 }
