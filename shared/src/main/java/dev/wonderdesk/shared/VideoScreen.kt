@@ -29,6 +29,7 @@ fun VideoScreen() {
     var uriText by rememberSaveable { mutableStateOf(activity.intent.data?.toString() ?: prefs.getString("last", null)) }
     var speed by remember { mutableFloatStateOf(prefs.getFloat("speed", 1f)) }
     var repeat by remember { mutableStateOf(prefs.getBoolean("repeat", false)) }
+    var muted by remember { mutableStateOf(prefs.getBoolean("muted", false)) }
     var loadedUri by remember { mutableStateOf<String?>(null) }
     val currentUri by rememberUpdatedState(loadedUri)
     val player = remember { ExoPlayer.Builder(context).setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true).setHandleAudioBecomingNoisy(true).build() }
@@ -43,6 +44,7 @@ fun VideoScreen() {
             player.setMediaItem(MediaItem.fromUri(Uri.parse(it)), prefs.getLong("position:$it", 0L))
             player.setPlaybackSpeed(speed)
             player.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+            player.volume = if (muted) 0f else 1f
             player.prepare()
             loadedUri = it
             op.notice("Video loaded. Tap play in the video controls. Codec support depends on the device.")
@@ -82,6 +84,11 @@ fun VideoScreen() {
             player.repeatMode = if (repeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             prefs.edit().putBoolean("repeat", repeat).apply()
         }) { Text(if (repeat) "Repeat: On" else "Repeat: Off") }
+        TextButton(onClick = {
+            muted = !muted
+            player.volume = if (muted) 0f else 1f
+            prefs.edit().putBoolean("muted", muted).apply()
+        }) { Text(if (muted) "Unmute" else "Mute") }
         Text("Touch controls: play/pause, seek and track/subtitle settings. Leaves originals unchanged. Playback pauses when you leave; no background video, clipping or editor yet.", style = MaterialTheme.typography.bodySmall)
     }
 }
