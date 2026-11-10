@@ -69,6 +69,10 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.border
 import dev.wonderdesk.shared.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -285,7 +289,15 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             activity.window.attributes = activity.window.attributes.apply { screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE }
         }
     }
-    LaunchedEffect(Unit) { while (true) { pos = player.currentPosition; dur = player.duration.coerceAtLeast(0); if (pos > 0 && pos / 1000 % 10 == 0L) Resume.set(context, uri, pos, dur); delay(250) } }
+    // Position updates are quick while the controls show and slow while they're hidden, to save battery.
+    LaunchedEffect(controls, isPlaying) {
+        var saved = 0L
+        while (true) {
+            pos = player.currentPosition; dur = player.duration.coerceAtLeast(0)
+            if (kotlin.math.abs(pos - saved) > 10_000) { Resume.set(context, uri, pos, dur); saved = pos }
+            delay(if (controls && isPlaying) 250 else 2000)
+        }
+    }
     LaunchedEffect(controls, isPlaying, sheet) { if (controls && isPlaying && sheet == null) { delay(3500); controls = false } }
     LaunchedEffect(hud) { if (hud != null) { delay(900); hud = null } }
     LaunchedEffect(subtitle) {
@@ -334,39 +346,44 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                     IconButton(onClick = { locked = false; hud = "Unlocked" }, Modifier.align(Alignment.CenterStart).padding(16.dp).clip(CircleShape).background(Color.Black.copy(alpha = .5f))) { Icon(WonderIcons.Lock, "Unlock", tint = Color.White) }
                     return@Box
                 }
-                // top bar
-                Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .7f), Color.Transparent))).statusBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onClose) { Icon(WonderIcons.ArrowBack, "Back", tint = Color.White) }
-                    Text(title, Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { sheet = "tracks" }) { Icon(WonderIcons.Translate, "Audio and subtitles", tint = Color.White) }
-                    IconButton(onClick = { sheet = "speed" }) { Text("${if (speed % 1 == 0f) speed.toInt() else speed}×", color = Color.White, style = MaterialTheme.typography.labelLarge) }
-                    IconButton(onClick = { MainActivity.enterPip(activity) }) { Icon(WonderIcons.Layers, "Picture in picture", tint = Color.White) }
-                    IconButton(onClick = { sheet = "more" }) { Icon(WonderIcons.MoreVert, "More", tint = Color.White) }
+                val chrome = playerChrome(LocalLook.current)
+                // title bar: a slim glass strip, like a QuickTime window title
+                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(10.dp).clip(RoundedCornerShape(chrome.radius)).background(Brush.verticalGradient(chrome.bar))
+                    .border(1.dp, chrome.edge, RoundedCornerShape(chrome.radius)).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onClose) { Icon(WonderIcons.ArrowBack, "Back", tint = chrome.ink) }
+                    Text(title, Modifier.weight(1f), color = chrome.ink, style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { sheet = "tracks" }) { Icon(WonderIcons.Translate, "Audio and subtitles", tint = chrome.ink) }
+                    IconButton(onClick = { MainActivity.enterPip(activity) }) { Icon(WonderIcons.Layers, "Picture in picture", tint = chrome.ink) }
+                    IconButton(onClick = { sheet = "more" }) { Icon(WonderIcons.MoreVert, "More", tint = chrome.ink) }
                 }
-                // centre transport
-                Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(36.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RoundBtn(WonderIcons.Replay10, "Back 10 seconds", 52) { player.seekBack() }
-                    RoundBtn(if (isPlaying) WonderIcons.Pause else WonderIcons.PlayArrow, if (isPlaying) "Pause" else "Play", 72) { if (player.isPlaying) player.pause() else { if (player.playbackState == Player.STATE_ENDED) player.seekTo(0); player.play() } }
-                    RoundBtn(WonderIcons.Forward10, "Forward 10 seconds", 52) { player.seekForward() }
-                }
-                // bottom bar
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .75f)))).navigationBarsPadding().padding(12.dp)) {
+                // floating HUD controller
+                Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 14.dp).widthIn(max = 640.dp).fillMaxWidth()
+                    .shadow(18.dp, RoundedCornerShape(chrome.radius + 6.dp)).clip(RoundedCornerShape(chrome.radius + 6.dp)).background(Brush.verticalGradient(chrome.hud))
+                    .border(1.dp, chrome.edge, RoundedCornerShape(chrome.radius + 6.dp))
+                    .drawBehind { drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = chrome.gloss), Color.Transparent), endY = size.height * .45f)) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(timeText(pos), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                        Slider(if (dur > 0) pos.toFloat() / dur else 0f, { player.seekTo((it * dur).toLong()); pos = (it * dur).toLong() }, Modifier.weight(1f).padding(horizontal = 8.dp),
-                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color(0xFFE5483C), inactiveTrackColor = Color.White.copy(alpha = .3f)))
-                        Text("-" + timeText(dur - pos), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        IconButton(onClick = { locked = true; controls = false; hud = "Locked" }) { Icon(WonderIcons.Lock, "Lock controls", tint = chrome.ink.copy(alpha = .85f)) }
+                        IconButton(onClick = { loop = !loop; player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF; hud = if (loop) "Loop on" else "Loop off" }) {
+                            Icon(WonderIcons.Repeat, "Loop", tint = if (loop) chrome.accent else chrome.ink.copy(alpha = .85f)) }
+                        Spacer(Modifier.weight(1f))
+                        HudButton(WonderIcons.Replay10, "Back 10 seconds", chrome) { player.seekBack() }
+                        Spacer(Modifier.width(14.dp))
+                        GelPlay(isPlaying, chrome) { if (player.isPlaying) player.pause() else { if (player.playbackState == Player.STATE_ENDED) player.seekTo(0); player.play() } }
+                        Spacer(Modifier.width(14.dp))
+                        HudButton(WonderIcons.Forward10, "Forward 10 seconds", chrome) { player.seekForward() }
+                        Spacer(Modifier.weight(1f))
+                        Text("${if (speed % 1 == 0f) speed.toInt() else speed}×", Modifier.clip(RoundedCornerShape(8.dp)).clickable { sheet = "speed" }.padding(10.dp), color = chrome.ink, style = MaterialTheme.typography.labelLarge)
+                        IconButton(onClick = onEdit) { Icon(WonderIcons.ContentCut, "Edit", tint = chrome.ink.copy(alpha = .85f)) }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { locked = true; controls = false; hud = "Locked" }) { Icon(WonderIcons.Lock, "Lock controls", tint = Color.White) }
-                        IconButton(onClick = { loop = !loop; player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF; hud = if (loop) "Loop on" else "Loop off" }) {
-                            Icon(WonderIcons.Repeat, "Loop", tint = if (loop) Color(0xFFE5483C) else Color.White) }
-                        Spacer(Modifier.weight(1f))
+                        Text(timeText(pos), color = chrome.ink.copy(alpha = .9f), style = MaterialTheme.typography.labelMedium)
+                        Scrubber(if (dur > 0) pos.toFloat() / dur else 0f, chrome, Modifier.weight(1f).padding(horizontal = 10.dp)) { f -> player.seekTo((f * dur).toLong()); pos = (f * dur).toLong() }
+                        Text("-" + timeText(dur - pos), color = chrome.ink.copy(alpha = .9f), style = MaterialTheme.typography.labelMedium)
                         IconButton(onClick = { resize = when (resize) { AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM; AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_FILL; else -> AspectRatioFrameLayout.RESIZE_MODE_FIT }
-                            hud = when (resize) { AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Fill screen"; AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Stretch"; else -> "Fit" } }) { Icon(WonderIcons.Crop, "Aspect", tint = Color.White) }
+                            hud = when (resize) { AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Fill screen"; AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Stretch"; else -> "Fit" } }) { Icon(WonderIcons.Fullscreen, "Aspect", tint = chrome.ink.copy(alpha = .85f)) }
                         IconButton(onClick = { landscape = !landscape; activity.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }) {
-                            Icon(WonderIcons.RotateRight, "Rotate", tint = Color.White) }
-                        IconButton(onClick = onEdit) { Icon(WonderIcons.ContentCut, "Edit", tint = Color.White) }
+                            Icon(WonderIcons.RotateRight, "Rotate", tint = chrome.ink.copy(alpha = .85f)) }
                     }
                 }
             }
@@ -402,6 +419,61 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             }
         }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Close") } })
     }
+}
+
+/** Colours of the player's glass controls for each suite look. */
+private data class PlayerChrome(val hud: List<Color>, val bar: List<Color>, val edge: Color, val ink: Color, val accent: Color, val track: Color, val gel: List<Color>, val gloss: Float, val radius: androidx.compose.ui.unit.Dp)
+
+private fun playerChrome(look: WonderLook) = when (look) {
+    // QuickTime X smoked glass with an Aqua blue gel button
+    WonderLook.AQUA -> PlayerChrome(listOf(Color(0xD9404650), Color(0xE61A1D22)), listOf(Color(0xC04A505A), Color(0xC0202328)), Color(0x66FFFFFF), Color.White, Color(0xFF5AB0FF),
+        Color(0x55FFFFFF), listOf(Color(0xFF9FD3FF), Color(0xFF2B86E8), Color(0xFF0F5FC4)), .16f, 14.dp)
+    // Windows Media Player XP: Luna blue with a green play orb
+    WonderLook.BLISS -> PlayerChrome(listOf(Color(0xE62A6FD6), Color(0xF0103E9E)), listOf(Color(0xE63A86F2), Color(0xE6114BB8)), Color(0xAA9FC4FF), Color.White, Color(0xFF8BE36B),
+        Color(0x66FFFFFF), listOf(Color(0xFFB9F49A), Color(0xFF3FAE2A), Color(0xFF1F7A12)), .22f, 6.dp)
+    WonderLook.DARK -> PlayerChrome(listOf(Color(0xE63A3F47), Color(0xF01B1E22)), listOf(Color(0xCC3A3F47), Color(0xCC1B1E22)), Color(0x33FFFFFF), Color(0xFFEDEFF2), Color(0xFF6EA8FF),
+        Color(0x44FFFFFF), listOf(Color(0xFF8FB9FF), Color(0xFF3D6FC4), Color(0xFF244A8A)), .08f, 12.dp)
+    WonderLook.SUPER -> PlayerChrome(listOf(Color(0xE02A1A55), Color(0xF00D0A1A)), listOf(Color(0xCC3B1F7A), Color(0xCC1B1238)), Color(0xAA00F0FF), Color(0xFFF2ECFF), Color(0xFF00F0FF),
+        Color(0x5500F0FF), listOf(Color(0xFFFF7AC8), Color(0xFFB01EFF), Color(0xFF5B0FA8)), .12f, 18.dp)
+}
+
+/** Glossy round play/pause button (an Aqua gel). */
+@Composable
+private fun GelPlay(playing: Boolean, c: PlayerChrome, onClick: () -> Unit) {
+    Box(Modifier.size(62.dp).shadow(8.dp, CircleShape).clip(CircleShape).background(Brush.verticalGradient(c.gel)).border(1.dp, Color.White.copy(alpha = .55f), CircleShape)
+        .drawBehind { drawOval(Brush.verticalGradient(listOf(Color.White.copy(alpha = .75f), Color.White.copy(alpha = .05f))), topLeft = androidx.compose.ui.geometry.Offset(size.width * .14f, size.height * .05f),
+            size = androidx.compose.ui.geometry.Size(size.width * .72f, size.height * .45f)) }
+        .clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(if (playing) WonderIcons.Pause else WonderIcons.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(36.dp))
+    }
+}
+
+@Composable
+private fun HudButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, c: PlayerChrome, onClick: () -> Unit) {
+    Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) { Icon(icon, desc, tint = c.ink, modifier = Modifier.size(30.dp)) }
+}
+
+/** iTunes-style capsule scrubber with a glossy fill and a round knob. Drag or tap to seek. */
+@Composable
+private fun Scrubber(value: Float, c: PlayerChrome, modifier: Modifier, onSeek: (Float) -> Unit) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val v = (dragging ?: value).coerceIn(0f, 1f)
+    Box(modifier.height(30.dp).pointerInput(Unit) {
+        detectTapGestures { o -> onSeek((o.x / size.width).coerceIn(0f, 1f)) }
+    }.pointerInput(Unit) {
+        detectHorizontalDragGestures(onDragStart = { o -> dragging = (o.x / size.width).coerceIn(0f, 1f) }, onDragEnd = { dragging?.let(onSeek); dragging = null }, onDragCancel = { dragging = null }) { ch, d ->
+            ch.consume(); dragging = ((dragging ?: value) + d / size.width).coerceIn(0f, 1f); onSeek(dragging!!)
+        }
+    }.drawBehind {
+        val h = 7.dp.toPx(); val y = size.height / 2 - h / 2; val r = androidx.compose.ui.geometry.CornerRadius(h / 2)
+        drawRoundRect(c.track, androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Size(size.width, h), r)
+        drawRoundRect(Brush.verticalGradient(listOf(c.accent.copy(alpha = 1f), c.accent.copy(red = c.accent.red * .7f, green = c.accent.green * .7f, blue = c.accent.blue * .8f)), startY = y, endY = y + h),
+            androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Size(size.width * v, h), r)
+        drawRoundRect(Color.White.copy(alpha = .35f), androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Size(size.width * v, h / 2), r)
+        val kx = size.width * v; val kr = (if (dragging != null) 10.dp else 8.dp).toPx()
+        drawCircle(Color.Black.copy(alpha = .35f), kr + 1.5f, androidx.compose.ui.geometry.Offset(kx, size.height / 2 + 1.5f))
+        drawCircle(Brush.verticalGradient(listOf(Color.White, Color(0xFFCFD5DC)), startY = size.height / 2 - kr, endY = size.height / 2 + kr), kr, androidx.compose.ui.geometry.Offset(kx, size.height / 2))
+    })
 }
 
 @Composable

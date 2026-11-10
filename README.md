@@ -7,6 +7,7 @@ A video player and editor for every video on your phone.
 - Library of all your videos with thumbnails, folders, search and sorting, plus **Continue watching**.
 - Fullscreen player: double-tap the sides to skip 10 seconds, swipe sideways to seek, swipe the left side for brightness and the right side for volume, pinch to fill the screen. It also has a lock, a loop, speed from 0.25× to 3×, audio and subtitle tracks, your own .srt/.vtt subtitles, and picture-in-picture.
 - **Editor**: trim, remove sound, rotate and shrink to 1080p/720p/480p, saved as a new video in Movies/Cinema. You can also save any frame as a picture.
+- The fullscreen player has a floating QuickTime-style glass controller that matches your suite look.
 
 ## Install and update
 
