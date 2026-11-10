@@ -1,6 +1,6 @@
 # Cinema for Android
 
-Plays videos from your phone with touch controls. By Rednave.
+Plays videos from your phone with touch controls.
 
 ## Easiest install and updates
 
