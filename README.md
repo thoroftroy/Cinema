@@ -1,21 +1,23 @@
-# Cinema for Android
+# Cinema
 
-Plays videos from your phone with touch controls.
+A video player and editor for every video on your phone.
 
-## Easiest install and updates
+## What it does
 
-Get App Hub once from https://github.com/thoroftroy/App-Hub/releases, then use it to install and update this app and the rest of the suite. You will not need to download APKs by hand.
-## Install
+- Library of all your videos with thumbnails, folders, search and sorting, plus **Continue watching**.
+- Fullscreen player: double-tap the sides to skip 10 seconds, swipe sideways to seek, swipe the left side for brightness and the right side for volume, pinch to fill the screen. It also has a lock, a loop, speed from 0.25× to 3×, audio and subtitle tracks, your own .srt/.vtt subtitles, and picture-in-picture.
+- **Editor**: trim, remove sound, rotate and shrink to 1080p/720p/480p, saved as a new video in Movies/Cinema. You can also save any frame as a picture.
 
-Install the APK, then open the app. Your phone may ask you to allow unknown sources first. Needs Android 10 or newer.
-## Using Cinema
+## Install and update
 
-- Open a video file to play it. Position, speed and repeat are remembered.
-- Change speed, loop one video, or mute from the controls.
-- Sharing sends the original file. Nothing is edited.
+The easiest way is Wonderdesk Apphub: get it once from https://github.com/thoroftroy/App-Hub/releases, then install and update this app and the rest of the suite from there.
 
-Only formats your phone supports will play. No background play, clipping or editing.
+Or download the APK from this repository's Releases, open it, and allow installing from that source if your phone asks. Needs Android 10 or newer.
 
 ## Look and feel
 
-Open About in the app to change the theme or motion. Aqua is the default.
+Every Wonderdesk app follows the look you pick in Control Room (Aqua, Bliss, Dark Bliss or Super). You can give this app its own look in its Settings.
+
+## Privacy
+
+Everything stays on your phone. No accounts, ads or tracking.
