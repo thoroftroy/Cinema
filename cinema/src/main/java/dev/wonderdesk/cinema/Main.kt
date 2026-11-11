@@ -73,6 +73,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import dev.wonderdesk.shared.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -524,10 +525,15 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     val p = wonderPalette()
     val player = remember { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(uri)); prepare() } }
     var dur by remember { mutableLongStateOf(0L) }
-    var range by remember { mutableStateOf(0f..1f) }
+    // The video as segments; cut ones are skipped in preview and left out of the export.
+    data class Seg(val start: Long, val end: Long, val keep: Boolean = true)
+    var segs by remember { mutableStateOf<List<Seg>>(emptyList()) }
+    var selected by remember { mutableIntStateOf(-1) }
+    val undo = remember { ArrayDeque<List<Seg>>() }
+    fun change(n: List<Seg>) { undo.addLast(segs); if (undo.size > 40) undo.removeFirst(); segs = n }
     var mute by remember { mutableStateOf(false) }
     var rotate by remember { mutableIntStateOf(0) }
-    var size by remember { mutableIntStateOf(0) } // 0 original, 1 1080p, 2 720p, 3 480p
+    var outSize by remember { mutableIntStateOf(0) } // 0 original, 1 1080p, 2 720p, 3 480p
     var progress by remember { mutableStateOf<Int?>(null) }
     var pos by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(false) }
@@ -536,31 +542,79 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     DisposableEffect(Unit) { val l = object : Player.Listener { override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying } }; player.addListener(l); onDispose { player.release(); Editor.cancel() } }
     LaunchedEffect(Unit) {
         while (dur <= 0) { dur = player.duration.takeIf { it > 0 } ?: 0; delay(100) }
-        withContext(Dispatchers.IO) { (0 until 8).forEach { i -> Videos.frame(context, uri, dur * i / 8)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 160, (160f * b.height / b.width).toInt().coerceAtLeast(1), true).let { s -> withContext(Dispatchers.Main) { strip += s } } } } }
+        segs = listOf(Seg(0, dur))
+        withContext(Dispatchers.IO) { (0 until 10).forEach { i -> Videos.frame(context, uri, dur * i / 10)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 160, (160f * b.height / b.width).toInt().coerceAtLeast(1), true).let { s -> withContext(Dispatchers.Main) { strip += s } } } } }
     }
-    LaunchedEffect(Unit) { while (true) { pos = player.currentPosition; if (player.isPlaying && pos >= (range.endInclusive * dur).toLong()) { player.pause(); player.seekTo((range.start * dur).toLong()) }; delay(100) } }
-    WonderApp(appName = "Cinema", about = ABOUT, title = "Edit video", subtitle = title, onBack = onClose) {
+    // Preview jumps over the parts you cut.
+    LaunchedEffect(playing) {
+        while (true) {
+            pos = player.currentPosition
+            if (player.isPlaying) {
+                val here = segs.firstOrNull { pos in it.start until it.end }
+                if (here != null && !here.keep) { val next = segs.firstOrNull { it.keep && it.start >= here.end }; if (next != null) player.seekTo(next.start) else { player.pause(); player.seekTo(segs.firstOrNull { it.keep }?.start ?: 0) } }
+            }
+            delay(if (player.isPlaying) 50 else 200)
+        }
+    }
+    val kept = segs.filter { it.keep }
+    val keptMs = kept.sumOf { it.end - it.start }
+    fun split() {
+        val i = segs.indexOfFirst { pos > it.start + 150 && pos < it.end - 150 }
+        if (i < 0) { toastRef.value("Move the playhead inside a part to split it"); return }
+        val s = segs[i]; change(segs.toMutableList().apply { set(i, s.copy(end = pos)); add(i + 1, s.copy(start = pos)) }); selected = i + 1
+    }
+    WonderApp(appName = "Cinema", about = ABOUT, title = "Edit video", subtitle = title, onBack = onClose,
+        actions = { ToolbarButton(WonderIcons.Undo, "Undo", { undo.removeLastOrNull()?.let { segs = it; selected = -1 } }, enabled = undo.isNotEmpty()) }) {
         toastRef.value = LocalToast.current
         Page {
             Box(Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(RoundedCornerShape(10.dp)).background(Color.Black)) {
                 AndroidView({ PlayerView(it).apply { useController = false; this.player = player } }, Modifier.fillMaxSize().graphicsLayer { rotationZ = rotate.toFloat() })
                 RoundBtnSmall(if (playing) WonderIcons.Pause else WonderIcons.PlayArrow, Modifier.align(Alignment.Center)) {
-                    if (player.isPlaying) player.pause() else { if (pos < (range.start * dur) || pos >= (range.endInclusive * dur)) player.seekTo((range.start * dur).toLong()); player.play() }
+                    if (player.isPlaying) player.pause() else { if (segs.firstOrNull { pos in it.start until it.end }?.keep == false) segs.firstOrNull { it.keep && it.start >= pos }?.let { player.seekTo(it.start) }; player.play() }
                 }
+                Text(timeText(pos) + " / " + timeText(dur), Modifier.align(Alignment.BottomEnd).padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = .55f)).padding(6.dp, 2.dp), color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
-            Panel(title = "Trim") {
-                Column(Modifier.padding(12.dp)) {
-                    Row(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(6.dp))) {
-                        strip.forEach { Image(it.asImageBitmap(), null, Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop) }
-                        if (strip.isEmpty()) Box(Modifier.fillMaxSize().background(p.separator))
+            Panel(title = "Timeline", footer = "Move the playhead, tap Split, then tap a part and Cut it. Cut parts are skipped when you play and left out when you save.") {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // filmstrip with segments and a draggable playhead
+                    Box(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(8.dp)).pointerInput(dur, segs) {
+                        detectTapGestures { o -> if (dur > 0) { val t = (o.x / size.width * dur).toLong().coerceIn(0, dur); player.seekTo(t); pos = t; selected = segs.indexOfFirst { t in it.start until it.end } } }
+                    }.pointerInput(dur) {
+                        detectHorizontalDragGestures { ch, _ -> if (dur > 0) { val t = (ch.position.x / size.width * dur).toLong().coerceIn(0, dur); player.seekTo(t); pos = t } }
+                    }) {
+                        Row(Modifier.fillMaxSize()) {
+                            strip.forEach { Image(it.asImageBitmap(), null, Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop) }
+                            if (strip.isEmpty()) Box(Modifier.fillMaxSize().background(p.separator))
+                        }
+                        Canvas(Modifier.fillMaxSize()) {
+                            if (dur <= 0) return@Canvas
+                            segs.forEachIndexed { i, sg ->
+                                val x0 = size.width * sg.start / dur; val x1 = size.width * sg.end / dur
+                                if (!sg.keep) {
+                                    drawRect(Color.Black.copy(alpha = .62f), androidx.compose.ui.geometry.Offset(x0, 0f), androidx.compose.ui.geometry.Size(x1 - x0, size.height))
+                                    var x = x0; while (x < x1) { drawLine(Color(0xFFE5483C).copy(alpha = .8f), androidx.compose.ui.geometry.Offset(x, size.height), androidx.compose.ui.geometry.Offset((x + size.height).coerceAtMost(x1), 0f), 3f); x += 18f }
+                                }
+                                if (i == selected) drawRect(Color(0xFFFFD34D), androidx.compose.ui.geometry.Offset(x0 + 2, 2f), androidx.compose.ui.geometry.Size(x1 - x0 - 4, size.height - 4), style = androidx.compose.ui.graphics.drawscope.Stroke(5f))
+                                if (i > 0) drawLine(Color.White, androidx.compose.ui.geometry.Offset(x0, 0f), androidx.compose.ui.geometry.Offset(x0, size.height), 4f)
+                            }
+                            val px = size.width * pos / dur
+                            drawLine(Color.White, androidx.compose.ui.geometry.Offset(px, 0f), androidx.compose.ui.geometry.Offset(px, size.height), 6f)
+                            drawCircle(Color.White, 9f, androidx.compose.ui.geometry.Offset(px, 9f))
+                        }
                     }
-                    RangeSlider(range, { r -> val moved = if (r.start != range.start) r.start else r.endInclusive; range = r; player.seekTo((moved * dur).toLong()) }, colors = SliderDefaults.colors(thumbColor = p.accent, activeTrackColor = p.accent))
-                    Row { Text(timeText((range.start * dur).toLong()), style = MaterialTheme.typography.labelMedium); Spacer(Modifier.weight(1f))
-                        Text("Length " + timeText(((range.endInclusive - range.start) * dur).toLong()), style = MaterialTheme.typography.labelMedium, color = p.accent); Spacer(Modifier.weight(1f))
-                        Text(timeText((range.endInclusive * dur).toLong()), style = MaterialTheme.typography.labelMedium) }
-                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WButton("Start here", { if (dur > 0) range = (pos.toFloat() / dur).coerceAtMost(range.endInclusive - .01f)..range.endInclusive }, kind = ButtonKind.Plain)
-                        WButton("End here", { if (dur > 0) range = range.start..(pos.toFloat() / dur).coerceAtLeast(range.start + .01f) }, kind = ButtonKind.Plain)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${segs.size} part${if (segs.size == 1) "" else "s"} · ${segs.count { !it.keep }} cut", style = MaterialTheme.typography.labelMedium, color = p.secondaryText)
+                        Spacer(Modifier.weight(1f))
+                        Text("New length " + timeText(keptMs), style = MaterialTheme.typography.labelMedium, color = p.accent)
+                    }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WButton("Split here", { split() }, icon = WonderIcons.ContentCut)
+                        val sel = segs.getOrNull(selected)
+                        WButton(if (sel?.keep == false) "Keep part" else "Cut part", { sel?.let { change(segs.toMutableList().apply { set(selected, it.copy(keep = !it.keep)) }) } ?: toastRef.value("Tap a part of the timeline first") },
+                            icon = if (sel?.keep == false) WonderIcons.Restore else WonderIcons.Delete, kind = if (sel?.keep == false) ButtonKind.Secondary else ButtonKind.Danger, enabled = sel != null)
+                        WButton("Cut everything before", { if (pos > 0) { val n = segs.flatMap { sg -> if (pos in sg.start + 1 until sg.end) listOf(sg.copy(end = pos, keep = false), sg.copy(start = pos)) else listOf(if (sg.end <= pos) sg.copy(keep = false) else sg) }; change(n) } }, kind = ButtonKind.Plain)
+                        WButton("Cut everything after", { if (pos < dur) { val n = segs.flatMap { sg -> if (pos in sg.start + 1 until sg.end) listOf(sg.copy(end = pos), sg.copy(start = pos, keep = false)) else listOf(if (sg.start >= pos) sg.copy(keep = false) else sg) }; change(n) } }, kind = ButtonKind.Plain)
+                        WButton("Reset", { change(listOf(Seg(0, dur))); selected = -1 }, kind = ButtonKind.Plain)
                     }
                 }
             }
@@ -573,28 +627,27 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                 PanelDivider()
                 Column(Modifier.padding(12.dp)) {
                     Text("Size", style = MaterialTheme.typography.titleSmall)
-                    Segmented(listOf("Original", "1080p", "720p", "480p"), size) { size = it }
+                    Segmented(listOf("Original", "1080p", "720p", "480p"), outSize) { outSize = it }
                     Text("Smaller sizes are quicker to send.", style = MaterialTheme.typography.bodySmall, color = p.secondaryText, modifier = Modifier.padding(top = 4.dp))
                 }
             }
             WButton(if (progress != null) "Saving… ${progress!!.coerceAtLeast(0)}%" else "Save as new video", {
-                val spec = EditSpec((range.start * dur).toLong(), (range.endInclusive * dur).toLong(), mute, rotate, listOf(null, 1080, 720, 480)[size])
+                val spec = EditSpec(kept.map { it.start to it.end }, mute, rotate, listOf(null, 1080, 720, 480)[outSize])
                 val out = File(context.cacheDir, "edit.mp4")
                 progress = 0
-                val poll = Editor.export(context, uri, spec, out) { r ->
+                val poll = runCatching { Editor.export(context, uri, spec, out) { r ->
                     kotlinx.coroutines.MainScope().launch {
                         val saved = r.mapCatching { withContext(Dispatchers.IO) { Videos.publish(context, it, title.substringBeforeLast('.') + " (edited).mp4", image = false) } }
                         progress = null
                         toastRef.value(saved.fold({ "Saved to Movies/Cinema" }, { "Couldn't export: ${it.message}" }))
                     }
-                }
-                kotlinx.coroutines.MainScope().launch { while (progress != null) { progress = poll().takeIf { it >= 0 } ?: progress; delay(300) } }
-            }, Modifier.fillMaxWidth(), icon = WonderIcons.Save, kind = ButtonKind.Primary, enabled = progress == null && dur > 0)
+                } }.getOrElse { toastRef.value(it.message ?: "Couldn't export"); progress = null; null }
+                if (poll != null) kotlinx.coroutines.MainScope().launch { while (progress != null) { progress = poll().takeIf { it >= 0 } ?: progress; delay(300) } }
+            }, Modifier.fillMaxWidth(), icon = WonderIcons.Save, kind = ButtonKind.Primary, enabled = progress == null && dur > 0 && kept.isNotEmpty())
             if (progress != null) WButton("Cancel export", { Editor.cancel(); progress = null }, kind = ButtonKind.Plain)
         }
     }
 }
-
 
 @Composable
 private fun RoundBtnSmall(icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {

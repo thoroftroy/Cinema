@@ -1,5 +1,11 @@
 # Cinema changelog
 
+## v0.4.0
+
+- Cut parts out of the middle of a video: split the timeline into segments, keep or cut each one, undo, and export just the parts you kept
+- If the app ever crashes or freezes, a report goes to Control Room so it can be shared and fixed
+- App icon art is larger and fills its tile without being cut off
+
 ## v0.3.1
 
 - New fullscreen player look that follows your suite theme: a floating QuickTime-style glass controller with a glossy gel play button and an iTunes-style scrubber (Luna blue in Bliss, graphite in Dark, neon in Super)

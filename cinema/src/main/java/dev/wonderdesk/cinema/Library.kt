@@ -83,7 +83,8 @@ object Resume {
     fun progress(c: Context, uri: Uri): Float = prefs(c).getString(uri.toString(), null)?.let { runCatching { JSONObject(it).let { o -> o.getLong("pos").toFloat() / o.getLong("dur").coerceAtLeast(1) } }.getOrNull() } ?: 0f
 }
 
-data class EditSpec(val startMs: Long, val endMs: Long, val mute: Boolean, val rotate: Int, val height: Int?)
+/** [keep] are the parts of the video to keep, in order; everything between them is cut out. */
+data class EditSpec(val keep: List<Pair<Long, Long>>, val mute: Boolean, val rotate: Int, val height: Int?)
 
 /** Video edits with Media3 Transformer. Must be started on the main thread. */
 @UnstableApi
@@ -91,20 +92,24 @@ object Editor {
     private var transformer: Transformer? = null
 
     fun export(c: Context, src: Uri, spec: EditSpec, out: File, onDone: (Result<File>) -> Unit): () -> Int {
-        val clip = MediaItem.ClippingConfiguration.Builder().setStartPositionMs(spec.startMs).setEndPositionMs(spec.endMs).build()
-        val item = MediaItem.Builder().setUri(src).setClippingConfiguration(clip).build()
         val effects = buildList<androidx.media3.common.Effect> {
             if (spec.rotate % 360 != 0) add(ScaleAndRotateTransformation.Builder().setRotationDegrees(spec.rotate.toFloat()).build())
             spec.height?.let { add(Presentation.createForHeight(it)) }
         }
-        val edited = EditedMediaItem.Builder(item).setRemoveAudio(spec.mute).setEffects(Effects(emptyList(), effects)).build()
+        // Each kept part becomes a clip; the clips play back to back in one new video.
+        val clips = spec.keep.filter { it.second - it.first >= 100 }.map { (a, b) ->
+            val item = MediaItem.Builder().setUri(src).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(a).setEndPositionMs(b).build()).build()
+            EditedMediaItem.Builder(item).setRemoveAudio(spec.mute).setEffects(Effects(emptyList(), effects)).build()
+        }
+        require(clips.isNotEmpty()) { "Keep at least one part of the video" }
+        val composition = Composition.Builder(androidx.media3.transformer.EditedMediaItemSequence(clips)).build()
         val t = Transformer.Builder(c).addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) { transformer = null; onDone(Result.success(out)) }
             override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) { transformer = null; onDone(Result.failure(exportException)) }
         }).build()
         transformer = t
         out.delete()
-        t.start(edited, out.path)
+        t.start(composition, out.path)
         val holder = ProgressHolder()
         return { if (t.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) holder.progress else -1 }
     }
