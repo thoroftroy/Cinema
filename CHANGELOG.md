@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.5
+
+- Widgets can now match your look: new Bliss blue and Super neon backgrounds, and “Match my Wonderdesk look” follows whatever Control Room is set to
+
 ## v0.5.4
 
 - Plays the next video in the same folder when one ends, in name order, so episodes run one after another (Settings › Playback; off for loops and the sleep timer)
