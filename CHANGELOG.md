@@ -1,5 +1,15 @@
 # Cinema changelog
 
+## v0.5.3
+
+- Sleep timer in the ⋮ menu: pause after 15 to 90 minutes, or at the end of the video
+- A-B repeat: mark the start and end of a part and it plays on a loop
+- Memories can now send a video straight to Cinema's editor
+- Player controls now come from the suite kit, so Memories and Wayfinder look the same
+- Tap the tab you're already on to glide back to the top of its list
+- New Continue watching widget: the video you were part-way through with a picture, how far you got and a Resume button
+- Nothing required stays hidden: if Android is blocking something the app needs, a slim banner says what and takes you straight to the switch, and Settings › Permissions and access lists everything with its state
+
 ## v0.5.2
 
 - Smoother everywhere: new screens, tabs and Settings ease in instead of snapping, and buttons, tabs, chips and switches give a light tap you can feel (following your phone's touch-feedback setting)

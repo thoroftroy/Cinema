@@ -76,7 +76,10 @@ object Resume {
         if (duration > 0 && (pos < 5_000 || pos > duration - 10_000)) e.remove(uri.toString())
         else e.putString(uri.toString(), JSONObject().put("pos", pos).put("dur", duration).put("at", System.currentTimeMillis()).toString())
         e.apply()
+        // The widget only needs to catch up now and then, not every few seconds of playback.
+        if (System.currentTimeMillis() - lastWidget > 60_000) { lastWidget = System.currentTimeMillis(); dev.wonderdesk.shared.refreshWidgets(c, ContinueWidget::class.java) }
     }
+    private var lastWidget = 0L
     fun recent(c: Context): List<Triple<Uri, Long, Long>> = prefs(c).all.mapNotNull { (k, v) ->
         runCatching { val o = JSONObject(v as String); Triple(Uri.parse(k), o.getLong("pos"), o.getLong("at")) to o.getLong("dur") }.getOrNull()
     }.sortedByDescending { it.first.third }.map { it.first }

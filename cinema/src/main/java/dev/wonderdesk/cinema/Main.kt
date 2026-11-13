@@ -97,6 +97,11 @@ class MainActivity : WonderActivity() {
     }
 }
 
+/** What Android must allow for this app to work fully; shown as a banner when off and in Settings. */
+private val APP_NEEDS by lazy { listOf(
+    WonderNeed("Videos", "Finds every video on your phone", permissions = if (android.os.Build.VERSION.SDK_INT >= 33) listOf(android.Manifest.permission.READ_MEDIA_VIDEO) else listOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)),
+) }
+
 private const val ABOUT = "Cinema plays every video on your phone: resume where you left off, swipe to seek or change brightness and volume, pick audio and subtitle tracks, " +
     "load your own subtitles, change speed, and keep watching in picture-in-picture. Its editor trims clips, removes sound, rotates, shrinks for sharing and saves still frames."
 
@@ -111,7 +116,8 @@ fun CinemaApp() {
     LaunchedEffect(incoming) {
         val i = incoming ?: (context as ComponentActivity).intent
         MainActivity.incoming.value = null; (context as ComponentActivity).intent = Intent()
-        i?.data?.let { playingItem = it to context.displayName(it) }
+        val u = i?.data ?: return@LaunchedEffect
+        if (i.action == Intent.ACTION_EDIT || i.action == "dev.wonderdesk.cinema.EDIT") editing = u to context.displayName(u) else playingItem = u to context.displayName(u)
     }
     val p = playingItem; val e = editing
     when {
@@ -139,7 +145,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     var sort by rememberSaveable { mutableIntStateOf(0) }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(granted, tick) { if (granted) videos = withContext(Dispatchers.IO) { Videos.all(context) } }
-    WonderApp(appName = "Cinema", about = ABOUT,
+    WonderApp(needs = APP_NEEDS, appName = "Cinema", about = ABOUT,
         tabs = listOf(WonderTab("all", "Videos", WonderIcons.VideoLibrary), WonderTab("folders", "Folders", WonderIcons.Folder)),
         selectedTab = tab, onTab = { tab = it; folder = null }, title = folder ?: "Cinema", onBack = folder?.let { { folder = null } },
         actions = { ToolbarButton(WonderIcons.FolderOpen, "Open a video file", { pick.launch(arrayOf("video/*")) }); ToolbarButton(WonderIcons.Refresh, "Refresh", { tick++ }) },
@@ -163,7 +169,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
         if (all.isEmpty()) { EmptyState("No videos yet", "Videos you record or download appear here automatically.", action = { WButton("Open a file", { pick.launch(arrayOf("video/*")) }) }); return@WonderApp }
         if (tab == "folders" && folder == null) {
             val folders = all.groupBy { it.folder }.toList().sortedByDescending { it.second.maxOf { v -> v.added } }
-            LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize(), state = rememberTabTopGrid(), contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(folders, key = { it.first }) { (name, list) ->
                     Column(Modifier.clickable { folder = name }) {
                         Thumb(list.first(), Modifier.fillMaxWidth().aspectRatio(16 / 9f))
@@ -177,7 +183,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
         val base = all.filter { (folder == null || it.folder == folder) && (q.isBlank() || it.title.contains(q, true)) }
         val shown = when (sort) { 1 -> base.sortedBy { it.title.lowercase() }; 2 -> base.sortedByDescending { it.duration }; 3 -> base.sortedByDescending { it.size }; else -> base }
         val recent = remember(tick, all) { Resume.recent(context).mapNotNull { (u, _, _) -> all.find { it.uri == u } }.take(10) }
-        LazyVerticalGrid(GridCells.Adaptive(170.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        LazyVerticalGrid(GridCells.Adaptive(170.dp), Modifier.fillMaxSize(), state = rememberTabTopGrid(), contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SearchField(q, { q = it }, "Search ${all.size} videos")
@@ -271,6 +277,11 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     var hud by remember { mutableStateOf<String?>(null) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var landscape by remember { mutableStateOf(false) }
+    // Sleep timer: pause after a set time, or when this video ends (-1).
+    var sleepAt by remember { mutableLongStateOf(0L) }
+    // A-B repeat: loops the part between two marks.
+    var abA by remember { mutableLongStateOf(-1L) }
+    var abB by remember { mutableLongStateOf(-1L) }
     var brightness by remember { mutableFloatStateOf(activity.window.attributes.screenBrightness.takeIf { it >= 0 } ?: .5f) }
     val inPip by MainActivity.pip
     MainActivity.autoPip.value = context.prefs("cinema").getBoolean("autoPip", true)
@@ -282,7 +293,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
         ctl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         ctl.hide(WindowInsetsCompat.Type.systemBars())
         onDispose {
-            Resume.set(context, uri, player.currentPosition, player.duration)
+            Resume.set(context, uri, player.currentPosition, player.duration); refreshWidgets(context, ContinueWidget::class.java)
             player.removeListener(l); player.release(); MainActivity.playing.value = false
             activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             ctl.show(WindowInsetsCompat.Type.systemBars())
@@ -301,6 +312,18 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     }
     LaunchedEffect(controls, isPlaying, sheet) { if (controls && isPlaying && sheet == null) { delay(3500); controls = false } }
     LaunchedEffect(hud) { if (hud != null) { delay(900); hud = null } }
+    LaunchedEffect(sleepAt) {
+        if (sleepAt > 0) { delay((sleepAt - System.currentTimeMillis()).coerceAtLeast(0)); player.pause(); hud = "Sleep timer: paused"; sleepAt = 0 }
+    }
+    LaunchedEffect(sleepAt == -1L) {
+        if (sleepAt != -1L) return@LaunchedEffect
+        player.repeatMode = Player.REPEAT_MODE_OFF; loop = false
+        while (sleepAt == -1L) { if (player.playbackState == Player.STATE_ENDED) { sleepAt = 0; hud = "Sleep timer: done" }; delay(1000) }
+    }
+    LaunchedEffect(abA, abB, isPlaying) {
+        if (abA < 0 || abB <= abA) return@LaunchedEffect
+        while (true) { if (player.currentPosition >= abB) player.seekTo(abA); delay(100) }
+    }
     LaunchedEffect(subtitle) {
         val s = subtitle ?: return@LaunchedEffect
         val at = player.currentPosition
@@ -400,6 +423,15 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                 }
             }
         }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Done") } })
+        "sleep" -> WonderDialog(onDismissRequest = { sheet = null }, title = { Text("Sleep timer") }, text = {
+            Panel {
+                listOf(15, 30, 45, 60, 90).forEachIndexed { i, m -> if (i > 0) PanelDivider(16.dp)
+                    ListRow("In $m minutes", onClick = { sleepAt = System.currentTimeMillis() + m * 60_000L; sheet = null; hud = "Pausing in $m min" }) }
+                PanelDivider(16.dp)
+                ListRow("At the end of this video", selected = sleepAt == -1L, onClick = { sleepAt = -1L; sheet = null; hud = "Stops at the end" })
+                if (sleepAt != 0L) { PanelDivider(16.dp); ListRow("Turn off", danger = true, onClick = { sleepAt = 0; sheet = null; hud = "Sleep timer off" }) }
+            }
+        }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Close") } })
         "tracks" -> TrackSheet(player, onLoadSubs = { sheet = null; subPicker.launch(arrayOf("application/x-subrip", "text/*", "*/*")) }) { sheet = null }
         "more" -> WonderDialog(onDismissRequest = { sheet = null }, title = { Text(title) }, text = {
             Panel {
@@ -416,65 +448,21 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                     }
                 })
                 PanelDivider()
+                ListRow(when { sleepAt == -1L -> "Sleep timer: end of this video"; sleepAt > 0 -> "Sleep timer: pauses at " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(sleepAt)); else -> "Sleep timer" },
+                    subtitle = "Pause after a while, for falling asleep to a film", icon = WonderIcons.Bedtime, tint = Color(0xFF5B4BC4), chevron = true, onClick = { sheet = "sleep" })
+                PanelDivider()
+                ListRow(when { abA < 0 -> "Repeat a part (A-B)"; abB <= abA -> "Set B: end of the part"; else -> "Repeating ${timeText(abA)}–${timeText(abB)}" },
+                    subtitle = when { abA < 0 -> "Tap to mark A here, then again later to mark B"; abB <= abA -> "A is at ${timeText(abA)}. Tap here at the end of the part"; else -> "Tap to stop repeating" },
+                    icon = WonderIcons.Repeat, tint = Color(0xFFE39A12), onClick = {
+                        val at = player.currentPosition
+                        when { abA < 0 -> { abA = at; abB = -1; hud = "A set at ${timeText(at)}" }; abB <= abA -> { if (at > abA + 500) { abB = at; hud = "Repeating A-B" } else hud = "Play on a little, then set B" }; else -> { abA = -1; abB = -1; hud = "A-B repeat off" } }
+                        sheet = null
+                    })
+                PanelDivider()
                 ListRow("Share video", icon = WonderIcons.Share, tint = Color(0xFF1E7FE8), onClick = { sheet = null; context.share(uri, "video/*") {} })
             }
         }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Close") } })
     }
-}
-
-/** Colours of the player's glass controls for each suite look. */
-private data class PlayerChrome(val hud: List<Color>, val bar: List<Color>, val edge: Color, val ink: Color, val accent: Color, val track: Color, val gel: List<Color>, val gloss: Float, val radius: androidx.compose.ui.unit.Dp)
-
-private fun playerChrome(look: WonderLook) = when (look) {
-    // QuickTime X smoked glass with an Aqua blue gel button
-    WonderLook.AQUA -> PlayerChrome(listOf(Color(0xD9404650), Color(0xE61A1D22)), listOf(Color(0xC04A505A), Color(0xC0202328)), Color(0x66FFFFFF), Color.White, Color(0xFF5AB0FF),
-        Color(0x55FFFFFF), listOf(Color(0xFF9FD3FF), Color(0xFF2B86E8), Color(0xFF0F5FC4)), .16f, 14.dp)
-    // Windows Media Player XP: Luna blue with a green play orb
-    WonderLook.BLISS -> PlayerChrome(listOf(Color(0xE62A6FD6), Color(0xF0103E9E)), listOf(Color(0xE63A86F2), Color(0xE6114BB8)), Color(0xAA9FC4FF), Color.White, Color(0xFF8BE36B),
-        Color(0x66FFFFFF), listOf(Color(0xFFB9F49A), Color(0xFF3FAE2A), Color(0xFF1F7A12)), .22f, 6.dp)
-    WonderLook.DARK -> PlayerChrome(listOf(Color(0xE63A3F47), Color(0xF01B1E22)), listOf(Color(0xCC3A3F47), Color(0xCC1B1E22)), Color(0x33FFFFFF), Color(0xFFEDEFF2), Color(0xFF6EA8FF),
-        Color(0x44FFFFFF), listOf(Color(0xFF8FB9FF), Color(0xFF3D6FC4), Color(0xFF244A8A)), .08f, 12.dp)
-    WonderLook.SUPER -> PlayerChrome(listOf(Color(0xE02A1A55), Color(0xF00D0A1A)), listOf(Color(0xCC3B1F7A), Color(0xCC1B1238)), Color(0xAA00F0FF), Color(0xFFF2ECFF), Color(0xFF00F0FF),
-        Color(0x5500F0FF), listOf(Color(0xFFFF7AC8), Color(0xFFB01EFF), Color(0xFF5B0FA8)), .12f, 18.dp)
-}
-
-/** Glossy round play/pause button (an Aqua gel). */
-@Composable
-private fun GelPlay(playing: Boolean, c: PlayerChrome, onClick: () -> Unit) {
-    Box(Modifier.size(62.dp).shadow(8.dp, CircleShape).clip(CircleShape).background(Brush.verticalGradient(c.gel)).border(1.dp, Color.White.copy(alpha = .55f), CircleShape)
-        .drawBehind { drawOval(Brush.verticalGradient(listOf(Color.White.copy(alpha = .75f), Color.White.copy(alpha = .05f))), topLeft = androidx.compose.ui.geometry.Offset(size.width * .14f, size.height * .05f),
-            size = androidx.compose.ui.geometry.Size(size.width * .72f, size.height * .45f)) }
-        .clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(if (playing) WonderIcons.Pause else WonderIcons.PlayArrow, if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(36.dp))
-    }
-}
-
-@Composable
-private fun HudButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, c: PlayerChrome, onClick: () -> Unit) {
-    Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) { Icon(icon, desc, tint = c.ink, modifier = Modifier.size(30.dp)) }
-}
-
-/** iTunes-style capsule scrubber with a glossy fill and a round knob. Drag or tap to seek. */
-@Composable
-private fun Scrubber(value: Float, c: PlayerChrome, modifier: Modifier, onSeek: (Float) -> Unit) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    val v = (dragging ?: value).coerceIn(0f, 1f)
-    Box(modifier.height(30.dp).pointerInput(Unit) {
-        detectTapGestures { o -> onSeek((o.x / size.width).coerceIn(0f, 1f)) }
-    }.pointerInput(Unit) {
-        detectHorizontalDragGestures(onDragStart = { o -> dragging = (o.x / size.width).coerceIn(0f, 1f) }, onDragEnd = { dragging?.let(onSeek); dragging = null }, onDragCancel = { dragging = null }) { ch, d ->
-            ch.consume(); dragging = ((dragging ?: value) + d / size.width).coerceIn(0f, 1f); onSeek(dragging!!)
-        }
-    }.drawBehind {
-        val h = 7.dp.toPx(); val y = size.height / 2 - h / 2; val r = androidx.compose.ui.geometry.CornerRadius(h / 2)
-        drawRoundRect(c.track, androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Size(size.width, h), r)
-        drawRoundRect(Brush.verticalGradient(listOf(c.accent.copy(alpha = 1f), c.accent.copy(red = c.accent.red * .7f, green = c.accent.green * .7f, blue = c.accent.blue * .8f)), startY = y, endY = y + h),
-            androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Size(size.width * v, h), r)
-        drawRoundRect(Color.White.copy(alpha = .35f), androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Size(size.width * v, h / 2), r)
-        val kx = size.width * v; val kr = (if (dragging != null) 10.dp else 8.dp).toPx()
-        drawCircle(Color.Black.copy(alpha = .35f), kr + 1.5f, androidx.compose.ui.geometry.Offset(kx, size.height / 2 + 1.5f))
-        drawCircle(Brush.verticalGradient(listOf(Color.White, Color(0xFFCFD5DC)), startY = size.height / 2 - kr, endY = size.height / 2 + kr), kr, androidx.compose.ui.geometry.Offset(kx, size.height / 2))
-    })
 }
 
 @Composable
