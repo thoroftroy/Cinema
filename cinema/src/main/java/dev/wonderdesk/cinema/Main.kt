@@ -112,6 +112,7 @@ fun CinemaApp() {
     val context = LocalContext.current
     var playingItem by remember { mutableStateOf<Pair<Uri, String>?>(null) }
     var editing by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    val scope = rememberCoroutineScope()
     val incoming by MainActivity.incoming
     LaunchedEffect(incoming) {
         val i = incoming ?: (context as ComponentActivity).intent
@@ -122,7 +123,16 @@ fun CinemaApp() {
     val p = playingItem; val e = editing
     when {
         e != null -> EditorScreen(e.first, e.second, onClose = { editing = null })
-        p != null -> PlayerScreen(p.first, p.second, onClose = { playingItem = null }, onEdit = { editing = p; playingItem = null })
+        p != null -> key(p.first) { PlayerScreen(p.first, p.second, onClose = { playingItem = null }, onEdit = { editing = p; playingItem = null }, onEnded = {
+            // Next video in the same folder, by name: episodes play in order.
+            scope.launch {
+                val next = withContext(Dispatchers.IO) { runCatching {
+                    val all = Videos.all(context); val cur = all.find { it.uri == p.first } ?: return@runCatching null
+                    all.filter { it.path == cur.path }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }).let { l -> l.getOrNull(l.indexOf(cur) + 1) }
+                }.getOrNull() }
+                if (next != null && playingItem?.first == p.first) playingItem = next.uri to next.title
+            }
+        }) }
         else -> LibraryScreen(onPlay = { playingItem = it.uri to it.title }, onEdit = { editing = it.uri to it.title })
     }
 }
@@ -154,6 +164,14 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
             Panel(title = "Playback") {
                 SwitchRow("Picture-in-picture when leaving", auto, { auto = it; MainActivity.autoPip.value = it; context.prefs("cinema").edit().putBoolean("autoPip", it).apply() },
                     subtitle = "Keep watching in a small window", icon = WonderIcons.Layers, tint = Color(0xFF1E7FE8))
+                PanelDivider()
+                var next by remember { mutableStateOf(context.prefs("cinema").getBoolean("autoNext", true)) }
+                SwitchRow("Play the next video automatically", next, { next = it; context.prefs("cinema").edit().putBoolean("autoNext", it).apply() },
+                    subtitle = "When one ends, the next in the same folder starts (great for episodes)", icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44))
+                PanelDivider()
+                var resume by remember { mutableStateOf(context.prefs("cinema").getBoolean("resume", true)) }
+                SwitchRow("Resume where you left off", resume, { resume = it; context.prefs("cinema").edit().putBoolean("resume", it).apply() },
+                    icon = WonderIcons.History, tint = Color(0xFFE39A12))
             }
         }) {
         if (!granted) {
@@ -255,7 +273,7 @@ private fun VideoCard(v: Video, onPlay: () -> Unit, onEdit: () -> Unit) {
 /* -------------------------------------------------------- player -------------------------------------------- */
 
 @Composable
-private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: () -> Unit) {
+private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: () -> Unit, onEnded: () -> Unit = {}) {
     val context = LocalContext.current
     val activity = context as Activity
     val audio = remember { context.getSystemService(AudioManager::class.java) }
@@ -263,7 +281,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     val player = remember {
         ExoPlayer.Builder(context).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build().apply {
             setMediaItem(MediaItem.fromUri(uri)); prepare(); playWhenReady = true
-            val resume = Resume.get(context, uri); if (resume > 0) seekTo(resume)
+            val resume = if (context.prefs("cinema").getBoolean("resume", true)) Resume.get(context, uri) else 0L; if (resume > 0) seekTo(resume)
         }
     }
     var isPlaying by remember { mutableStateOf(true) }
@@ -286,7 +304,9 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     val inPip by MainActivity.pip
     MainActivity.autoPip.value = context.prefs("cinema").getBoolean("autoPip", true)
     DisposableEffect(Unit) {
-        val l = object : Player.Listener { override fun onIsPlayingChanged(p: Boolean) { isPlaying = p; MainActivity.playing.value = p } }
+        val l = object : Player.Listener {
+            override fun onIsPlayingChanged(p: Boolean) { isPlaying = p; MainActivity.playing.value = p }
+        }
         player.addListener(l)
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val ctl = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
@@ -319,6 +339,9 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
         if (sleepAt != -1L) return@LaunchedEffect
         player.repeatMode = Player.REPEAT_MODE_OFF; loop = false
         while (sleepAt == -1L) { if (player.playbackState == Player.STATE_ENDED) { sleepAt = 0; hud = "Sleep timer: done" }; delay(1000) }
+    }
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying && player.playbackState == Player.STATE_ENDED && !loop && sleepAt != -1L && context.prefs("cinema").getBoolean("autoNext", true)) { hud = "Next video…"; delay(700); onEnded() }
     }
     LaunchedEffect(abA, abB, isPlaying) {
         if (abA < 0 || abB <= abA) return@LaunchedEffect
