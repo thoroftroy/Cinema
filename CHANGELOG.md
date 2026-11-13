@@ -1,5 +1,12 @@
 # Cinema changelog
 
+## v0.5.4
+
+- Plays the next video in the same folder when one ends, in name order, so episodes run one after another (Settings › Playback; off for loops and the sleep timer)
+- New setting to turn off resuming where you left off
+- Fixed the Continue watching widget not refreshing
+- Fixes from a full round of stress testing on every screen
+
 ## v0.5.3
 
 - Sleep timer in the ⋮ menu: pause after 15 to 90 minutes, or at the end of the video
@@ -9,8 +16,6 @@
 - Tap the tab you're already on to glide back to the top of its list
 - New Continue watching widget: the video you were part-way through with a picture, how far you got and a Resume button
 - Nothing required stays hidden: if Android is blocking something the app needs, a slim banner says what and takes you straight to the switch, and Settings › Permissions and access lists everything with its state
-- Plays the next video in the same folder when one ends, in name order, so episodes run one after another (Settings › Playback; off for loops and the sleep timer)
-- New setting to turn off resuming where you left off
 
 ## v0.5.2
 
