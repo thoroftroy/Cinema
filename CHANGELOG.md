@@ -1,5 +1,10 @@
 # Cinema changelog
 
+## v0.5.10
+
+- Widgets show a realistic preview in the widget list, so you can see what you're adding
+- Fixed a crash when moving around with arrow keys or Tab while a screen was closing
+
 ## v0.5.9
 
 - Open a network stream (the cast icon in the toolbar): paste any video link, including live HLS (.m3u8), DASH (.mpd) and RTSP streams; a link you copied is filled in for you
