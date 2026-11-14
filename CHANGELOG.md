@@ -1,5 +1,10 @@
 # Cinema changelog
 
+## v0.5.9
+
+- Open a network stream (the cast icon in the toolbar): paste any video link, including live HLS (.m3u8), DASH (.mpd) and RTSP streams; a link you copied is filled in for you
+- Browsers and other apps can open video links straight in Cinema
+
 ## v0.5.8
 
 - The Continue watching widget wakes the phone far less often; it refreshes itself when you watch something

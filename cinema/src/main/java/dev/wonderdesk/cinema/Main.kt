@@ -148,6 +148,13 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, VIDEO_PERMISSION) == PackageManager.PERMISSION_GRANTED) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> onPlay(Video(-1, u, context.displayName(u), 0, 0, 0, 0, "", 0, "")) } }
+    var streamAsk by remember { mutableStateOf(false) }
+    // Network streams: any http(s), HLS (.m3u8), DASH (.mpd) or RTSP link, like VLC's "Open network stream".
+    if (streamAsk) InputDialog("Open a network stream", "https://… or rtsp://…", initial = context.getSystemService(android.content.ClipboardManager::class.java)?.primaryClip?.getItemAt(0)?.text?.toString()?.trim()?.takeIf { it.startsWith("http") || it.startsWith("rtsp") }.orEmpty(),
+        confirm = "Play", onDismiss = { streamAsk = false }) { url ->
+        val u = android.net.Uri.parse(url.trim()); streamAsk = false
+        if (u.scheme in setOf("http", "https", "rtsp")) onPlay(Video(-1, u, u.lastPathSegment ?: u.host ?: "Stream", 0, 0, 0, 0, "", 0, ""))
+    }
     var videos by remember { mutableStateOf<List<Video>?>(null) }
     var tab by rememberSaveable { mutableStateOf("all") }
     var folder by rememberSaveable { mutableStateOf<String?>(null) }
@@ -158,7 +165,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     WonderApp(needs = APP_NEEDS, appName = "Cinema", about = ABOUT,
         tabs = listOf(WonderTab("all", "Videos", WonderIcons.VideoLibrary), WonderTab("folders", "Folders", WonderIcons.Folder)),
         selectedTab = tab, onTab = { tab = it; folder = null }, title = folder ?: "Cinema", onBack = folder?.let { { folder = null } },
-        actions = { ToolbarButton(WonderIcons.FolderOpen, "Open a video file", { pick.launch(arrayOf("video/*")) }); ToolbarButton(WonderIcons.Refresh, "Refresh", { tick++ }) },
+        actions = { ToolbarButton(WonderIcons.Cast, "Open a network stream", { streamAsk = true }); ToolbarButton(WonderIcons.FolderOpen, "Open a video file", { pick.launch(arrayOf("video/*")) }); ToolbarButton(WonderIcons.Refresh, "Refresh", { tick++ }) },
         settings = {
             var auto by remember { mutableStateOf(context.prefs("cinema").getBoolean("autoPip", true)) }
             Panel(title = "Playback") {
