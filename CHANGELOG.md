@@ -1,5 +1,13 @@
 # Cinema changelog
 
+## v0.5.11
+
+- Screen recorder: record the whole screen from the new Record tab or a quick settings tile, with quality, frame rate and sound choices
+- Clip mode: it watches the screen without saving anything, and Clip keeps the last few seconds and carries on recording until you stop
+- Editor: auto enhance, brightness, contrast, colour, warmth, zoom and crop, a caption, speed, volume and music or a voiceover from Echo, all shown live
+- Cast this screen to a TV from the Record tab
+- Loading screens now say what they are doing
+
 ## v0.5.10
 
 - Widgets show a realistic preview in the widget list, so you can see what you're adding

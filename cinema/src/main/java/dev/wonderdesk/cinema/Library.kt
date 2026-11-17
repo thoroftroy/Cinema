@@ -86,26 +86,83 @@ object Resume {
     fun progress(c: Context, uri: Uri): Float = prefs(c).getString(uri.toString(), null)?.let { runCatching { JSONObject(it).let { o -> o.getLong("pos").toFloat() / o.getLong("dur").coerceAtLeast(1) } }.getOrNull() } ?: 0f
 }
 
-/** [keep] are the parts of the video to keep, in order; everything between them is cut out. */
-data class EditSpec(val keep: List<Pair<Long, Long>>, val mute: Boolean, val rotate: Int, val height: Int?)
+/**
+ * [keep] are the parts of the video to keep, in order; everything between them is cut out.
+ * Brightness and contrast run -1 to 1, saturation and warmth -1 to 1, zoom 1 to 4 with pan -1 to 1.
+ */
+data class EditSpec(
+    val keep: List<Pair<Long, Long>>, val mute: Boolean, val rotate: Int, val height: Int?,
+    val brightness: Float = 0f, val contrast: Float = 0f, val saturation: Float = 0f, val warmth: Float = 0f,
+    val zoom: Float = 1f, val panX: Float = 0f, val panY: Float = 0f,
+    val volume: Float = 1f, val speed: Float = 1f,
+    val caption: String = "", val music: Uri? = null, val musicVolume: Float = 0.8f,
+)
 
 /** Video edits with Media3 Transformer. Must be started on the main thread. */
 @UnstableApi
 object Editor {
     private var transformer: Transformer? = null
 
-    fun export(c: Context, src: Uri, spec: EditSpec, out: File, onDone: (Result<File>) -> Unit): () -> Int {
-        val effects = buildList<androidx.media3.common.Effect> {
+    /** The picture effects for [spec]. Preview skips rotation and resizing, which the preview does itself. */
+    fun videoEffects(spec: EditSpec, preview: Boolean): List<androidx.media3.common.Effect> = buildList {
+        if (spec.zoom > 1.001f) {
+            val half = 1f / spec.zoom
+            val cx = spec.panX.coerceIn(-1f, 1f) * (1f - half)
+            val cy = spec.panY.coerceIn(-1f, 1f) * (1f - half)
+            add(androidx.media3.effect.Crop(cx - half, cx + half, cy - half, cy + half))
+        }
+        if (spec.brightness != 0f) add(androidx.media3.effect.Brightness(spec.brightness.coerceIn(-1f, 1f)))
+        if (spec.contrast != 0f) add(androidx.media3.effect.Contrast(spec.contrast.coerceIn(-1f, 1f)))
+        if (spec.saturation != 0f) add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(spec.saturation.coerceIn(-1f, 1f) * 100f).build())
+        if (spec.warmth != 0f) add(androidx.media3.effect.RgbAdjustment.Builder().setRedScale(1f + .18f * spec.warmth).setBlueScale(1f - .18f * spec.warmth).build())
+        if (spec.caption.isNotBlank()) {
+            val text = android.text.SpannableString(spec.caption.trim())
+            text.setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.WHITE), 0, text.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            text.setSpan(android.text.style.AbsoluteSizeSpan(56), 0, text.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            text.setSpan(android.text.style.BackgroundColorSpan(0x99000000.toInt()), 0, text.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val settings = androidx.media3.effect.OverlaySettings.Builder().setBackgroundFrameAnchor(0f, -.78f).build()
+            add(androidx.media3.effect.OverlayEffect(com.google.common.collect.ImmutableList.of<androidx.media3.effect.TextureOverlay>(androidx.media3.effect.TextOverlay.createStaticTextOverlay(text, settings))))
+        }
+        if (!preview) {
             if (spec.rotate % 360 != 0) add(ScaleAndRotateTransformation.Builder().setRotationDegrees(spec.rotate.toFloat()).build())
             spec.height?.let { add(Presentation.createForHeight(it)) }
+        }
+    }
+
+    /** A gain applied to every channel layout the clip might have. */
+    private fun volumeProcessor(v: Float): androidx.media3.common.audio.AudioProcessor =
+        androidx.media3.common.audio.ChannelMixingAudioProcessor().apply {
+            putChannelMixingMatrix(androidx.media3.common.audio.ChannelMixingMatrix.create(1, 1).scaleBy(v))
+            putChannelMixingMatrix(androidx.media3.common.audio.ChannelMixingMatrix.create(2, 2).scaleBy(v))
+        }
+
+    fun export(c: Context, src: Uri, spec: EditSpec, out: File, onDone: (Result<File>) -> Unit): () -> Int {
+        val video = videoEffects(spec, preview = false).toMutableList()
+        val audio = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
+        if (kotlin.math.abs(spec.volume - 1f) > .01f) audio += volumeProcessor(spec.volume)
+        if (kotlin.math.abs(spec.speed - 1f) > .01f) {
+            val speed = spec.speed
+            val provider = object : androidx.media3.common.audio.SpeedProvider {
+                override fun getSpeed(timeUs: Long) = speed
+                override fun getNextSpeedChangeTimeUs(timeUs: Long) = androidx.media3.common.C.TIME_UNSET
+            }
+            val pair = Effects.createExperimentalSpeedChangingEffect(provider)
+            audio += pair.first; video += pair.second
         }
         // Each kept part becomes a clip; the clips play back to back in one new video.
         val clips = spec.keep.filter { it.second - it.first >= 100 }.map { (a, b) ->
             val item = MediaItem.Builder().setUri(src).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(a).setEndPositionMs(b).build()).build()
-            EditedMediaItem.Builder(item).setRemoveAudio(spec.mute).setEffects(Effects(emptyList(), effects)).build()
+            EditedMediaItem.Builder(item).setRemoveAudio(spec.mute).setEffects(Effects(audio, video)).build()
         }
         require(clips.isNotEmpty()) { "Keep at least one part of the video" }
-        val composition = Composition.Builder(androidx.media3.transformer.EditedMediaItemSequence(clips)).build()
+        val sequences = mutableListOf(androidx.media3.transformer.EditedMediaItemSequence(clips))
+        spec.music?.let { m ->
+            val total = (spec.keep.sumOf { it.second - it.first } / spec.speed.coerceAtLeast(.1f)).toLong()
+            val track = MediaItem.Builder().setUri(m).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(0).setEndPositionMs(total).build()).build()
+            val item = EditedMediaItem.Builder(track).setRemoveVideo(true).setEffects(Effects(listOf(volumeProcessor(spec.musicVolume)), emptyList())).build()
+            sequences += androidx.media3.transformer.EditedMediaItemSequence(listOf(item))
+        }
+        val composition = Composition.Builder(sequences).build()
         val t = Transformer.Builder(c).addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) { transformer = null; onDone(Result.success(out)) }
             override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) { transformer = null; onDone(Result.failure(exportException)) }

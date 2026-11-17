@@ -2,6 +2,11 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <application android:enableOnBackInvokedCallback="true" android:label="Cinema">
         <activity android:name=".MainActivity" android:exported="true" android:resizeableActivity="true" android:launchMode="singleTask"
             android:supportsPictureInPicture="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
@@ -13,6 +18,11 @@
             <intent-filter><action android:name="android.intent.action.EDIT" /><action android:name="dev.wonderdesk.cinema.EDIT" /><category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" /><data android:mimeType="video/*" /></intent-filter>
         </activity>
+        <service android:name=".RecorderService" android:exported="false" android:foregroundServiceType="mediaProjection|microphone" />
+        <activity android:name=".RecordActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:taskAffinity="" />
+        <service android:name=".RecordTile" android:exported="true" android:label="Record screen" android:icon="@drawable/ic_tile_record" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
         <receiver android:name=".ContinueWidget" android:exported="true" android:label="Continue watching"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_continuewidget_info" /></receiver>
         <activity android:name=".ContinueWidgetSetup" android:exported="true" android:label="Widget settings"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter></activity>
     </application>

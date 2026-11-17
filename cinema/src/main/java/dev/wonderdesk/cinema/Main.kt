@@ -163,7 +163,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(granted, tick) { if (granted) videos = withContext(Dispatchers.IO) { Videos.all(context) } }
     WonderApp(needs = APP_NEEDS, appName = "Cinema", about = ABOUT,
-        tabs = listOf(WonderTab("all", "Videos", WonderIcons.VideoLibrary), WonderTab("folders", "Folders", WonderIcons.Folder)),
+        tabs = listOf(WonderTab("all", "Videos", WonderIcons.VideoLibrary), WonderTab("folders", "Folders", WonderIcons.Folder), WonderTab("record", "Record", WonderIcons.Videocam)),
         selectedTab = tab, onTab = { tab = it; folder = null }, title = folder ?: "Cinema", onBack = folder?.let { { folder = null } },
         actions = { ToolbarButton(WonderIcons.Cast, "Open a network stream", { streamAsk = true }); ToolbarButton(WonderIcons.FolderOpen, "Open a video file", { pick.launch(arrayOf("video/*")) }); ToolbarButton(WonderIcons.Refresh, "Refresh", { tick++ }) },
         settings = {
@@ -181,6 +181,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                     icon = WonderIcons.History, tint = Color(0xFFE39A12))
             }
         }) {
+        if (tab == "record") { RecorderScreen(); return@WonderApp }
         if (!granted) {
             EmptyState("See all your videos", "Allow Cinema to read the videos on this phone to build your library. You can also open single files without it.",
                 action = { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -190,7 +191,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
             return@WonderApp
         }
         val all = videos
-        if (all == null) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = p.accent) }; return@WonderApp }
+        if (all == null) { LoadingPane("Reading your video library", detail = "Looking through every folder on this phone for videos"); return@WonderApp }
         if (all.isEmpty()) { EmptyState("No videos yet", "Videos you record or download appear here automatically.", action = { WButton("Open a file", { pick.launch(arrayOf("video/*")) }) }); return@WonderApp }
         if (tab == "folders" && folder == null) {
             val folders = all.groupBy { it.folder }.toList().sortedByDescending { it.second.maxOf { v -> v.added } }
@@ -552,12 +553,34 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     var mute by remember { mutableStateOf(false) }
     var rotate by remember { mutableIntStateOf(0) }
     var outSize by remember { mutableIntStateOf(0) } // 0 original, 1 1080p, 2 720p, 3 480p
+    var bright by remember { mutableFloatStateOf(0f) }
+    var contrast by remember { mutableFloatStateOf(0f) }
+    var sat by remember { mutableFloatStateOf(0f) }
+    var warm by remember { mutableFloatStateOf(0f) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var panX by remember { mutableFloatStateOf(0f) }
+    var panY by remember { mutableFloatStateOf(0f) }
+    var volume by remember { mutableFloatStateOf(1f) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var caption by remember { mutableStateOf("") }
+    var music by remember { mutableStateOf<Uri?>(null) }
+    var musicName by remember { mutableStateOf("") }
+    var musicVol by remember { mutableFloatStateOf(.8f) }
+    var autoBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val pickMusic = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) { music = u; musicName = context.displayName(u) } }
     var progress by remember { mutableStateOf<Int?>(null) }
     var pos by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(false) }
     val strip = remember { mutableStateListOf<android.graphics.Bitmap>() }
     val toastRef = remember { mutableStateOf<(String) -> Unit>({}) }
     DisposableEffect(Unit) { val l = object : Player.Listener { override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying } }; player.addListener(l); onDispose { player.release(); Editor.cancel() } }
+    // The preview shows colour, zoom, caption, speed and volume as you change them.
+    LaunchedEffect(bright, contrast, sat, warm, zoom, panX, panY, caption) {
+        delay(120)
+        runCatching { player.setVideoEffects(Editor.videoEffects(EditSpec(emptyList(), false, 0, null, bright, contrast, sat, warm, zoom, panX, panY, caption = caption), preview = true)) }
+    }
+    LaunchedEffect(speed, volume) { player.setPlaybackSpeed(speed); player.volume = volume.coerceAtMost(1f) }
     LaunchedEffect(Unit) {
         while (dur <= 0) { dur = player.duration.takeIf { it > 0 } ?: 0; delay(100) }
         segs = listOf(Seg(0, dur))
@@ -636,9 +659,62 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                     }
                 }
             }
-            Panel(title = "Adjust") {
-                SwitchRow("Remove sound", mute, { mute = it }, icon = WonderIcons.VolumeUp, tint = Color(0xFFE5483C))
-                PanelDivider()
+            Panel(title = "Look", footer = "Auto enhance measures your video and sets brightness, contrast and colour for you. Everything below shows live in the preview.") {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    WButton(if (autoBusy) "Measuring your video…" else "Auto enhance", {
+                        autoBusy = true
+                        scope.launch {
+                            val luma = withContext(Dispatchers.IO) {
+                                val pts = listOf(.15f, .5f, .85f).mapNotNull { f -> Videos.frame(context, uri, (dur * f).toLong()) }
+                                if (pts.isEmpty()) null else pts.map { b ->
+                                    val sm = android.graphics.Bitmap.createScaledBitmap(b, 32, 32, true); var t = 0.0
+                                    for (x in 0 until 32) for (y in 0 until 32) { val c = sm.getPixel(x, y); t += (0.2126 * android.graphics.Color.red(c) + 0.7152 * android.graphics.Color.green(c) + 0.0722 * android.graphics.Color.blue(c)) / 255.0 }
+                                    t / 1024
+                                }.average()
+                            }
+                            if (luma != null) { bright = ((.45 - luma) * .6).toFloat().coerceIn(-.25f, .25f); contrast = .12f; sat = .1f; warm = 0f; toastRef.value("Tuned for this video") }
+                            else toastRef.value("Couldn't read the video to measure it")
+                            autoBusy = false
+                        }
+                    }, icon = WonderIcons.Tune, enabled = !autoBusy && dur > 0)
+                    SliderRow("Brightness", bright, -.5f..0.5f, { bright = it }) { "%+d".format((it * 100).toInt()) }
+                    SliderRow("Contrast", contrast, -.5f..0.5f, { contrast = it }) { "%+d".format((it * 100).toInt()) }
+                    SliderRow("Colour", sat, -1f..1f, { sat = it }) { "%+d".format((it * 100).toInt()) }
+                    SliderRow("Warmth", warm, -1f..1f, { warm = it }) { "%+d".format((it * 100).toInt()) }
+                    WButton("Reset look", { bright = 0f; contrast = 0f; sat = 0f; warm = 0f }, kind = ButtonKind.Plain)
+                }
+            }
+            Panel(title = "Zoom and crop", footer = "Zoom in to cut away the edges, then move the picture to frame what matters.") {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SliderRow("Zoom", zoom, 1f..4f, { zoom = it }) { "%.1fx".format(it) }
+                    if (zoom > 1.001f) {
+                        SliderRow("Left to right", panX, -1f..1f, { panX = it }) { "%+d".format((it * 100).toInt()) }
+                        SliderRow("Up and down", panY, -1f..1f, { panY = it }) { "%+d".format((it * 100).toInt()) }
+                    }
+                    WButton("Reset zoom", { zoom = 1f; panX = 0f; panY = 0f }, kind = ButtonKind.Plain)
+                }
+            }
+            Panel(title = "Sound and speed", footer = "Add music, a voiceover recorded in Echo, or a sound effect. It plays along the whole video, mixed under the original sound.") {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SwitchRow("Remove the original sound", mute, { mute = it }, icon = WonderIcons.VolumeUp, tint = Color(0xFFE5483C))
+                    SliderRow("Original volume", volume, 0f..2f, { volume = it }) { "${(it * 100).toInt()}%" }
+                    Text("Speed", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(.5f, .75f, 1f, 1.5f, 2f).forEach { v -> Chip(if (v == 1f) "Normal" else "${v}x", speed == v, { speed = v }) }
+                    }
+                    PanelDivider(inset = 0.dp)
+                    ListRow(if (music == null) "Add music, voiceover or sound" else musicName, subtitle = if (music == null) "Pick any audio file, such as a recording from Echo" else "Tap to choose another", icon = WonderIcons.Mic, tint = Color(0xFF2E9E44),
+                        onClick = { pickMusic.launch(arrayOf("audio/*")) })
+                    if (music != null) {
+                        SliderRow("Added sound volume", musicVol, 0f..1.5f, { musicVol = it }) { "${(it * 100).toInt()}%" }
+                        WButton("Remove added sound", { music = null; musicName = "" }, kind = ButtonKind.Plain)
+                    }
+                }
+            }
+            Panel(title = "Caption", footer = "Shows along the bottom for the whole video.") {
+                OutlinedTextField(caption, { caption = it.take(80) }, Modifier.fillMaxWidth().padding(12.dp), label = { Text("Text on the video") }, singleLine = true)
+            }
+            Panel(title = "Rotate and size") {
                 ListRow("Rotate", subtitle = if (rotate == 0) "Original" else "$rotate°", icon = WonderIcons.RotateRight, tint = Color(0xFF8E44AD), trailing = {
                     Row { IconButton(onClick = { rotate = (rotate + 270) % 360 }) { Icon(WonderIcons.RotateLeft, "Rotate left") }; IconButton(onClick = { rotate = (rotate + 90) % 360 }) { Icon(WonderIcons.RotateRight, "Rotate right") } }
                 })
@@ -650,7 +726,7 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                 }
             }
             WButton(if (progress != null) "Saving… ${progress!!.coerceAtLeast(0)}%" else "Save as new video", {
-                val spec = EditSpec(kept.map { it.start to it.end }, mute, rotate, listOf(null, 1080, 720, 480)[outSize])
+                val spec = EditSpec(kept.map { it.start to it.end }, mute, rotate, listOf(null, 1080, 720, 480)[outSize], bright, contrast, sat, warm, zoom, panX, panY, volume, speed, caption, music, musicVol)
                 val out = File(context.cacheDir, "edit.mp4")
                 progress = 0
                 val poll = runCatching { Editor.export(context, uri, spec, out) { r ->
@@ -664,6 +740,18 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
             }, Modifier.fillMaxWidth(), icon = WonderIcons.Save, kind = ButtonKind.Primary, enabled = progress == null && dur > 0 && kept.isNotEmpty())
             if (progress != null) WButton("Cancel export", { Editor.cancel(); progress = null }, kind = ButtonKind.Plain)
         }
+    }
+}
+
+@Composable
+private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit, format: (Float) -> String) {
+    val p = wonderPalette()
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Text(format(value), style = MaterialTheme.typography.labelMedium, color = p.accent)
+        }
+        Slider(value, onChange, valueRange = range)
     }
 }
 
