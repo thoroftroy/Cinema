@@ -481,7 +481,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                 ListRow(when { sleepAt == -1L -> "Sleep timer: end of this video"; sleepAt > 0 -> "Sleep timer: pauses at " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(sleepAt)); else -> "Sleep timer" },
                     subtitle = "Pause after a while, for falling asleep to a film", icon = WonderIcons.Bedtime, tint = Color(0xFF5B4BC4), chevron = true, onClick = { sheet = "sleep" })
                 PanelDivider()
-                ListRow(when { abA < 0 -> "Repeat a part (A-B)"; abB <= abA -> "Set B: end of the part"; else -> "Repeating ${timeText(abA)}–${timeText(abB)}" },
+                ListRow(when { abA < 0 -> "Repeat a part (A-B)"; abB <= abA -> "Set B: end of the part"; else -> "Repeating ${timeText(abA)} to ${timeText(abB)}" },
                     subtitle = when { abA < 0 -> "Tap to mark A here, then again later to mark B"; abB <= abA -> "A is at ${timeText(abA)}. Tap here at the end of the part"; else -> "Tap to stop repeating" },
                     icon = WonderIcons.Repeat, tint = Color(0xFFE39A12), onClick = {
                         val at = player.currentPosition
