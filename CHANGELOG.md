@@ -1,5 +1,11 @@
 # Cinema changelog
 
+## v0.5.12
+
+- The editor is now a real multi-clip timeline: add videos, split, cut, reorder and remove parts, and save them as one movie, even when the videos are different shapes
+- Cast a video to any DLNA smart TV, game console or media box with no Google services: pick the TV, then pause, seek and stop from the phone
+- Mirror the whole screen is still one tap away from the cast window
+
 ## v0.5.11
 
 - Screen recorder: record the whole screen from the new Record tab or a quick settings tile, with quality, frame rate and sound choices

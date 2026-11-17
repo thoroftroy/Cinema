@@ -302,6 +302,8 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     var loop by remember { mutableStateOf(false) }
     var hud by remember { mutableStateOf<String?>(null) }
     var sheet by remember { mutableStateOf<String?>(null) }
+    var cast by remember { mutableStateOf<Cast.Session?>(null) }
+    DisposableEffect(Unit) { onDispose { val c = cast; if (c != null) kotlinx.coroutines.MainScope().launch { c.stop() } } }
     var landscape by remember { mutableStateOf(false) }
     // Sleep timer: pause after a set time, or when this video ends (-1).
     var sleepAt by remember { mutableLongStateOf(0L) }
@@ -407,6 +409,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                     .border(1.dp, chrome.edge, RoundedCornerShape(chrome.radius)).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onClose) { Icon(WonderIcons.ArrowBack, "Back", tint = chrome.ink) }
                     Text(title, Modifier.weight(1f), color = chrome.ink, style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { sheet = "cast" }) { Icon(WonderIcons.Cast, "Cast to a TV", tint = if (cast != null) Color(0xFF2EE6D6) else chrome.ink) }
                     IconButton(onClick = { sheet = "tracks" }) { Icon(WonderIcons.Translate, "Audio and subtitles", tint = chrome.ink) }
                     IconButton(onClick = { MainActivity.enterPip(activity) }) { Icon(WonderIcons.Layers, "Picture in picture", tint = chrome.ink) }
                     IconButton(onClick = { sheet = "more" }) { Icon(WonderIcons.MoreVert, "More", tint = chrome.ink) }
@@ -463,6 +466,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                 if (sleepAt != 0L) { PanelDivider(16.dp); ListRow("Turn off", danger = true, onClick = { sleepAt = 0; sheet = null; hud = "Sleep timer off" }) }
             }
         }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Close") } })
+        "cast" -> CastSheet(uri, title, cast, { cast = it }, { player.currentPosition }, { player.pause() }, { sheet = null })
         "tracks" -> TrackSheet(player, onLoadSubs = { sheet = null; subPicker.launch(arrayOf("application/x-subrip", "text/*", "*/*")) }) { sheet = null }
         "more" -> WonderDialog(onDismissRequest = { sheet = null }, title = { Text(title) }, text = {
             Panel {
@@ -542,10 +546,11 @@ private fun TrackSheet(player: ExoPlayer, onLoadSubs: () -> Unit, onDismiss: () 
 private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     val context = LocalContext.current
     val p = wonderPalette()
-    val player = remember { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(uri)); prepare() } }
-    var dur by remember { mutableLongStateOf(0L) }
-    // The video as segments; cut ones are skipped in preview and left out of the export.
-    data class Seg(val start: Long, val end: Long, val keep: Boolean = true)
+    val player = remember { ExoPlayer.Builder(context).build().apply { prepare() } }
+    // Every video in the movie, and the pieces of them in the order they play. Cut pieces stay on the timeline, dimmed, and are skipped.
+    class Src(val uri: Uri, val name: String, val dur: Long, val w: Int, val h: Int, val strip: List<android.graphics.Bitmap>)
+    data class Seg(val src: Int, val start: Long, val end: Long, val keep: Boolean = true) { val len get() = end - start }
+    var srcs by remember { mutableStateOf<List<Src>>(emptyList()) }
     var segs by remember { mutableStateOf<List<Seg>>(emptyList()) }
     var selected by remember { mutableIntStateOf(-1) }
     val undo = remember { ArrayDeque<List<Seg>>() }
@@ -567,13 +572,27 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     var musicName by remember { mutableStateOf("") }
     var musicVol by remember { mutableFloatStateOf(.8f) }
     var autoBusy by remember { mutableStateOf(false) }
+    var addingClip by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val pickMusic = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) { music = u; musicName = context.displayName(u) } }
     var progress by remember { mutableStateOf<Int?>(null) }
-    var pos by remember { mutableLongStateOf(0L) }
+    var pos by remember { mutableLongStateOf(0L) }          // position on the whole timeline
     var playing by remember { mutableStateOf(false) }
-    val strip = remember { mutableStateListOf<android.graphics.Bitmap>() }
     val toastRef = remember { mutableStateOf<(String) -> Unit>({}) }
+    suspend fun loadSrc(u: Uri, name: String): Src? {
+        val info = withContext(Dispatchers.IO) { Videos.probe(context, u) } ?: return null
+        val frames = withContext(Dispatchers.IO) { (0 until 8).mapNotNull { i -> Videos.frame(context, u, info.first * i / 8)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 160, (160f * b.height / b.width).toInt().coerceAtLeast(1), true) } } }
+        return Src(u, name, info.first, info.second, info.third, frames)
+    }
+    val pickClip = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
+        if (u != null) scope.launch {
+            val name = context.displayName(u); addingClip = "Reading $name"
+            val s = loadSrc(u, name); addingClip = null
+            if (s == null || s.dur <= 0) { toastRef.value("Couldn't read that video"); return@launch }
+            srcs = srcs + s; change(segs + Seg(srcs.size - 1, 0, s.dur)); selected = segs.size - 1
+            toastRef.value("Added to the end of the movie")
+        }
+    }
     DisposableEffect(Unit) { val l = object : Player.Listener { override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying } }; player.addListener(l); onDispose { player.release(); Editor.cancel() } }
     // The preview shows colour, zoom, caption, speed and volume as you change them.
     LaunchedEffect(bright, contrast, sat, warm, zoom, panX, panY, caption) {
@@ -582,55 +601,94 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     }
     LaunchedEffect(speed, volume) { player.setPlaybackSpeed(speed); player.volume = volume.coerceAtMost(1f) }
     LaunchedEffect(Unit) {
-        while (dur <= 0) { dur = player.duration.takeIf { it > 0 } ?: 0; delay(100) }
-        segs = listOf(Seg(0, dur))
-        withContext(Dispatchers.IO) { (0 until 10).forEach { i -> Videos.frame(context, uri, dur * i / 10)?.let { b -> android.graphics.Bitmap.createScaledBitmap(b, 160, (160f * b.height / b.width).toInt().coerceAtLeast(1), true).let { s -> withContext(Dispatchers.Main) { strip += s } } } } }
+        addingClip = "Reading the video"
+        val s = loadSrc(uri, title)
+        addingClip = null
+        if (s != null) { srcs = listOf(s); segs = listOf(Seg(0, 0, s.dur)) }
     }
-    // Preview jumps over the parts you cut.
-    LaunchedEffect(playing) {
+    val total = segs.sumOf { it.len }
+    val kept = segs.filter { it.keep }
+    val keptMs = kept.sumOf { it.len }
+    fun segStart(i: Int) = segs.take(i).sumOf { it.len }
+    // The preview plays the kept pieces back to back, so cutting and reordering are what you hear and see.
+    fun seekGlobal(t: Long) {
+        var acc = 0L; var k = 0
+        for (sg in segs) {
+            if (t < acc + sg.len || sg === segs.last()) {
+                if (sg.keep) player.seekTo(k, (t - acc).coerceIn(0, sg.len)) else if (k < kept.size) player.seekTo(k, 0) else player.seekTo((kept.size - 1).coerceAtLeast(0), 0)
+                return
+            }
+            acc += sg.len; if (sg.keep) k++
+        }
+    }
+    LaunchedEffect(segs, srcs) {
+        if (srcs.isEmpty()) return@LaunchedEffect
+        val was = pos; val wasPlaying = player.isPlaying
+        player.setMediaItems(kept.map { sg -> MediaItem.Builder().setUri(srcs[sg.src].uri).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(sg.start).setEndPositionMs(sg.end).build()).build() })
+        player.prepare(); if (kept.isNotEmpty()) seekGlobal(was); player.playWhenReady = wasPlaying
+    }
+    LaunchedEffect(Unit) {
         while (true) {
-            pos = player.currentPosition
-            if (player.isPlaying) {
-                val here = segs.firstOrNull { pos in it.start until it.end }
-                if (here != null && !here.keep) { val next = segs.firstOrNull { it.keep && it.start >= here.end }; if (next != null) player.seekTo(next.start) else { player.pause(); player.seekTo(segs.firstOrNull { it.keep }?.start ?: 0) } }
+            val i = player.currentMediaItemIndex
+            if (kept.isNotEmpty() && i in kept.indices) {
+                var k = -1; var g = 0L
+                for (sg in segs) { if (sg.keep) { k++; if (k == i) break }; g += sg.len }
+                pos = g + player.currentPosition.coerceAtLeast(0)
             }
             delay(if (player.isPlaying) 50 else 200)
         }
     }
-    val kept = segs.filter { it.keep }
-    val keptMs = kept.sumOf { it.end - it.start }
     fun split() {
-        val i = segs.indexOfFirst { pos > it.start + 150 && pos < it.end - 150 }
-        if (i < 0) { toastRef.value("Move the playhead inside a part to split it"); return }
-        val s = segs[i]; change(segs.toMutableList().apply { set(i, s.copy(end = pos)); add(i + 1, s.copy(start = pos)) }); selected = i + 1
+        var acc = 0L
+        for ((i, sg) in segs.withIndex()) {
+            if (pos > acc + 150 && pos < acc + sg.len - 150) {
+                val at = sg.start + (pos - acc)
+                change(segs.toMutableList().apply { set(i, sg.copy(end = at)); add(i + 1, sg.copy(start = at)) }); selected = i + 1; return
+            }
+            acc += sg.len
+        }
+        toastRef.value("Move the playhead inside a part to split it")
     }
+    fun move(by: Int) { val i = selected; val j = i + by; if (i < 0 || j !in segs.indices) return
+        change(segs.toMutableList().apply { val t = this[i]; this[i] = this[j]; this[j] = t }); selected = j }
     WonderApp(appName = "Cinema", about = ABOUT, title = "Edit video", subtitle = title, onBack = onClose,
         actions = { ToolbarButton(WonderIcons.Undo, "Undo", { undo.removeLastOrNull()?.let { segs = it; selected = -1 } }, enabled = undo.isNotEmpty()) }) {
         toastRef.value = LocalToast.current
+        if (srcs.isEmpty()) { LoadingPane(addingClip ?: "Reading the video", detail = "Getting the video ready for editing"); return@WonderApp }
         Page {
             Box(Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(RoundedCornerShape(10.dp)).background(Color.Black)) {
                 AndroidView({ PlayerView(it).apply { useController = false; this.player = player } }, Modifier.fillMaxSize().graphicsLayer { rotationZ = rotate.toFloat() })
                 RoundBtnSmall(if (playing) WonderIcons.Pause else WonderIcons.PlayArrow, Modifier.align(Alignment.Center)) {
-                    if (player.isPlaying) player.pause() else { if (segs.firstOrNull { pos in it.start until it.end }?.keep == false) segs.firstOrNull { it.keep && it.start >= pos }?.let { player.seekTo(it.start) }; player.play() }
+                    if (player.isPlaying) player.pause() else { if (player.playbackState == Player.STATE_ENDED) seekGlobal(0); player.play() }
                 }
-                Text(timeText(pos) + " / " + timeText(dur), Modifier.align(Alignment.BottomEnd).padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = .55f)).padding(6.dp, 2.dp), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                Text(timeText(pos) + " / " + timeText(total), Modifier.align(Alignment.BottomEnd).padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = .55f)).padding(6.dp, 2.dp), color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
-            Panel(title = "Timeline", footer = "Move the playhead, tap Split, then tap a part and Cut it. Cut parts are skipped when you play and left out when you save.") {
+            addingClip?.let { LoadingPane(it, detail = "Getting the video ready for the timeline") }
+            Panel(title = "Timeline", footer = "Add as many videos as you like. Tap a part to select it, then Cut it, or move it earlier or later to change the order. Cut parts are skipped when you play and left out when you save.") {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // filmstrip with segments and a draggable playhead
-                    Box(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(8.dp)).pointerInput(dur, segs) {
-                        detectTapGestures { o -> if (dur > 0) { val t = (o.x / size.width * dur).toLong().coerceIn(0, dur); player.seekTo(t); pos = t; selected = segs.indexOfFirst { t in it.start until it.end } } }
-                    }.pointerInput(dur) {
-                        detectHorizontalDragGestures { ch, _ -> if (dur > 0) { val t = (ch.position.x / size.width * dur).toLong().coerceIn(0, dur); player.seekTo(t); pos = t } }
+                    // every part side by side, widths in proportion to length, with a draggable playhead
+                    Box(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(8.dp)).pointerInput(total, segs) {
+                        detectTapGestures { o -> if (total > 0) {
+                            val t = (o.x / size.width * total).toLong().coerceIn(0, total); seekGlobal(t); pos = t
+                            var acc = 0L; selected = segs.indexOfFirst { sg -> (t in acc until acc + sg.len).also { acc += sg.len } } } }
+                    }.pointerInput(total, segs) {
+                        detectHorizontalDragGestures { ch, _ -> if (total > 0) { val t = (ch.position.x / size.width * total).toLong().coerceIn(0, total); seekGlobal(t); pos = t } }
                     }) {
                         Row(Modifier.fillMaxSize()) {
-                            strip.forEach { Image(it.asImageBitmap(), null, Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop) }
-                            if (strip.isEmpty()) Box(Modifier.fillMaxSize().background(p.separator))
+                            segs.forEach { sg ->
+                                val frames = srcs.getOrNull(sg.src)?.strip.orEmpty()
+                                Row(Modifier.weight(sg.len.coerceAtLeast(1).toFloat()).fillMaxHeight()) {
+                                    if (frames.isEmpty()) Box(Modifier.fillMaxSize().background(p.separator))
+                                    else { val d = srcs[sg.src].dur.coerceAtLeast(1); val n = 4
+                                        for (k in 0 until n) { val f = ((sg.start + sg.len * (2 * k + 1) / (2 * n)) * frames.size / d).toInt().coerceIn(0, frames.size - 1); Image(frames[f].asImageBitmap(), null, Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop) } }
+                                }
+                            }
                         }
                         Canvas(Modifier.fillMaxSize()) {
-                            if (dur <= 0) return@Canvas
+                            if (total <= 0) return@Canvas
+                            var acc = 0L
                             segs.forEachIndexed { i, sg ->
-                                val x0 = size.width * sg.start / dur; val x1 = size.width * sg.end / dur
+                                val x0 = size.width * acc / total; val x1 = size.width * (acc + sg.len) / total; acc += sg.len
                                 if (!sg.keep) {
                                     drawRect(Color.Black.copy(alpha = .62f), androidx.compose.ui.geometry.Offset(x0, 0f), androidx.compose.ui.geometry.Size(x1 - x0, size.height))
                                     var x = x0; while (x < x1) { drawLine(Color(0xFFE5483C).copy(alpha = .8f), androidx.compose.ui.geometry.Offset(x, size.height), androidx.compose.ui.geometry.Offset((x + size.height).coerceAtMost(x1), 0f), 3f); x += 18f }
@@ -638,24 +696,29 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                                 if (i == selected) drawRect(Color(0xFFFFD34D), androidx.compose.ui.geometry.Offset(x0 + 2, 2f), androidx.compose.ui.geometry.Size(x1 - x0 - 4, size.height - 4), style = androidx.compose.ui.graphics.drawscope.Stroke(5f))
                                 if (i > 0) drawLine(Color.White, androidx.compose.ui.geometry.Offset(x0, 0f), androidx.compose.ui.geometry.Offset(x0, size.height), 4f)
                             }
-                            val px = size.width * pos / dur
+                            val px = size.width * pos / total
                             drawLine(Color.White, androidx.compose.ui.geometry.Offset(px, 0f), androidx.compose.ui.geometry.Offset(px, size.height), 6f)
                             drawCircle(Color.White, 9f, androidx.compose.ui.geometry.Offset(px, 9f))
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${segs.size} part${if (segs.size == 1) "" else "s"} · ${segs.count { !it.keep }} cut", style = MaterialTheme.typography.labelMedium, color = p.secondaryText)
+                        Text("${srcs.size} video${if (srcs.size == 1) "" else "s"} · ${segs.size} part${if (segs.size == 1) "" else "s"} · ${segs.count { !it.keep }} cut", style = MaterialTheme.typography.labelMedium, color = p.secondaryText)
                         Spacer(Modifier.weight(1f))
                         Text("New length " + timeText(keptMs), style = MaterialTheme.typography.labelMedium, color = p.accent)
                     }
+                    segs.getOrNull(selected)?.let { sg -> Text("Selected: ${srcs[sg.src].name}, ${timeText(sg.start)} to ${timeText(sg.end)}", style = MaterialTheme.typography.bodySmall, color = p.secondaryText, maxLines = 1) }
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WButton("Add video", { pickClip.launch(arrayOf("video/*")) }, icon = WonderIcons.Add, kind = ButtonKind.Primary)
                         WButton("Split here", { split() }, icon = WonderIcons.ContentCut)
                         val sel = segs.getOrNull(selected)
                         WButton(if (sel?.keep == false) "Keep part" else "Cut part", { sel?.let { change(segs.toMutableList().apply { set(selected, it.copy(keep = !it.keep)) }) } ?: toastRef.value("Tap a part of the timeline first") },
                             icon = if (sel?.keep == false) WonderIcons.Restore else WonderIcons.Delete, kind = if (sel?.keep == false) ButtonKind.Secondary else ButtonKind.Danger, enabled = sel != null)
-                        WButton("Cut everything before", { if (pos > 0) { val n = segs.flatMap { sg -> if (pos in sg.start + 1 until sg.end) listOf(sg.copy(end = pos, keep = false), sg.copy(start = pos)) else listOf(if (sg.end <= pos) sg.copy(keep = false) else sg) }; change(n) } }, kind = ButtonKind.Plain)
-                        WButton("Cut everything after", { if (pos < dur) { val n = segs.flatMap { sg -> if (pos in sg.start + 1 until sg.end) listOf(sg.copy(end = pos), sg.copy(start = pos, keep = false)) else listOf(if (sg.start >= pos) sg.copy(keep = false) else sg) }; change(n) } }, kind = ButtonKind.Plain)
-                        WButton("Reset", { change(listOf(Seg(0, dur))); selected = -1 }, kind = ButtonKind.Plain)
+                        WButton("Move earlier", { move(-1) }, kind = ButtonKind.Secondary, enabled = selected > 0)
+                        WButton("Move later", { move(1) }, kind = ButtonKind.Secondary, enabled = selected in 0 until segs.size - 1)
+                        WButton("Remove part", { if (selected in segs.indices && segs.size > 1) { change(segs.toMutableList().apply { removeAt(selected) }); selected = -1 } else toastRef.value("Tap one of several parts first") }, kind = ButtonKind.Plain, enabled = selected >= 0 && segs.size > 1)
+                        WButton("Cut everything before", { if (pos > 0) { var acc = 0L; val n = segs.flatMap { sg -> val s0 = acc; acc += sg.len; if (pos > s0 && pos < s0 + sg.len) listOf(sg.copy(end = sg.start + (pos - s0), keep = false), sg.copy(start = sg.start + (pos - s0))) else listOf(if (s0 + sg.len <= pos) sg.copy(keep = false) else sg) }; change(n) } }, kind = ButtonKind.Plain)
+                        WButton("Cut everything after", { if (pos < total) { var acc = 0L; val n = segs.flatMap { sg -> val s0 = acc; acc += sg.len; if (pos > s0 && pos < s0 + sg.len) listOf(sg.copy(end = sg.start + (pos - s0)), sg.copy(start = sg.start + (pos - s0), keep = false)) else listOf(if (s0 >= pos) sg.copy(keep = false) else sg) }; change(n) } }, kind = ButtonKind.Plain)
+                        WButton("Reset", { change(srcs.mapIndexed { i, s -> Seg(i, 0, s.dur) }); selected = -1 }, kind = ButtonKind.Plain)
                     }
                 }
             }
@@ -665,7 +728,7 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                         autoBusy = true
                         scope.launch {
                             val luma = withContext(Dispatchers.IO) {
-                                val pts = listOf(.15f, .5f, .85f).mapNotNull { f -> Videos.frame(context, uri, (dur * f).toLong()) }
+                                val pts = listOf(.15f, .5f, .85f).mapNotNull { f -> Videos.frame(context, srcs[0].uri, (srcs[0].dur * f).toLong()) }
                                 if (pts.isEmpty()) null else pts.map { b ->
                                     val sm = android.graphics.Bitmap.createScaledBitmap(b, 32, 32, true); var t = 0.0
                                     for (x in 0 until 32) for (y in 0 until 32) { val c = sm.getPixel(x, y); t += (0.2126 * android.graphics.Color.red(c) + 0.7152 * android.graphics.Color.green(c) + 0.0722 * android.graphics.Color.blue(c)) / 255.0 }
@@ -676,7 +739,7 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                             else toastRef.value("Couldn't read the video to measure it")
                             autoBusy = false
                         }
-                    }, icon = WonderIcons.Tune, enabled = !autoBusy && dur > 0)
+                    }, icon = WonderIcons.Tune, enabled = !autoBusy && srcs.isNotEmpty())
                     SliderRow("Brightness", bright, -.5f..0.5f, { bright = it }) { "%+d".format((it * 100).toInt()) }
                     SliderRow("Contrast", contrast, -.5f..0.5f, { contrast = it }) { "%+d".format((it * 100).toInt()) }
                     SliderRow("Colour", sat, -1f..1f, { sat = it }) { "%+d".format((it * 100).toInt()) }
@@ -726,10 +789,15 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                 }
             }
             WButton(if (progress != null) "Saving… ${progress!!.coerceAtLeast(0)}%" else "Save as new video", {
-                val spec = EditSpec(kept.map { it.start to it.end }, mute, rotate, listOf(null, 1080, 720, 480)[outSize], bright, contrast, sat, warm, zoom, panX, panY, volume, speed, caption, music, musicVol)
+                val first = srcs[kept.first().src]
+                val outH = listOf(null, 1080, 720, 480)[outSize]
+                val multi = kept.map { it.src }.distinct().size > 1
+                val canvas = if (!multi) null else { val sw = if (rotate % 180 != 0) first.h else first.w; val sh = if (rotate % 180 != 0) first.w else first.h
+                    val h = (outH ?: sh) and 1.inv(); Pair(((sw.toLong() * h / sh.coerceAtLeast(1)).toInt()) and 1.inv(), h) }
+                val spec = EditSpec(kept.map { Part(srcs[it.src].uri, it.start, it.end) }, mute, rotate, outH, bright, contrast, sat, warm, zoom, panX, panY, volume, speed, caption, music, musicVol, canvas)
                 val out = File(context.cacheDir, "edit.mp4")
                 progress = 0
-                val poll = runCatching { Editor.export(context, uri, spec, out) { r ->
+                val poll = runCatching { Editor.export(context, spec, out) { r ->
                     kotlinx.coroutines.MainScope().launch {
                         val saved = r.mapCatching { withContext(Dispatchers.IO) { Videos.publish(context, it, title.substringBeforeLast('.') + " (edited).mp4", image = false) } }
                         progress = null
@@ -737,7 +805,7 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
                     }
                 } }.getOrElse { toastRef.value(it.message ?: "Couldn't export"); progress = null; null }
                 if (poll != null) kotlinx.coroutines.MainScope().launch { while (progress != null) { progress = poll().takeIf { it >= 0 } ?: progress; delay(300) } }
-            }, Modifier.fillMaxWidth(), icon = WonderIcons.Save, kind = ButtonKind.Primary, enabled = progress == null && dur > 0 && kept.isNotEmpty())
+            }, Modifier.fillMaxWidth(), icon = WonderIcons.Save, kind = ButtonKind.Primary, enabled = progress == null && kept.isNotEmpty())
             if (progress != null) WButton("Cancel export", { Editor.cancel(); progress = null }, kind = ButtonKind.Plain)
         }
     }

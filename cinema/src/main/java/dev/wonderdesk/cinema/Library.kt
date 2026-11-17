@@ -47,6 +47,16 @@ object Videos {
     private val thumbs = object : LruCache<Long, Bitmap>(40 * 1024 * 1024) { override fun sizeOf(key: Long, value: Bitmap) = value.byteCount }
     fun thumb(c: Context, v: Video): Bitmap? = thumbs.get(v.id) ?: runCatching { c.contentResolver.loadThumbnail(v.uri, Size(384, 216), null) }.getOrNull()?.also { thumbs.put(v.id, it) }
 
+    /** Length, width and height of a video, or null if it can't be read. */
+    fun probe(c: Context, uri: Uri): Triple<Long, Int, Int>? = runCatching {
+        val r = android.media.MediaMetadataRetriever(); r.setDataSource(c, uri)
+        val d = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
+        val w = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
+        val h = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
+        val rot = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+        r.release(); if (rot % 180 != 0) Triple(d, h, w) else Triple(d, w, h)
+    }.getOrNull()
+
     fun frame(c: Context, uri: Uri, atMs: Long): Bitmap? = runCatching {
         MediaMetadataRetriever().use { r -> r.setDataSource(c, uri); r.getFrameAtTime(atMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST) }
     }.getOrNull()
@@ -90,12 +100,16 @@ object Resume {
  * [keep] are the parts of the video to keep, in order; everything between them is cut out.
  * Brightness and contrast run -1 to 1, saturation and warmth -1 to 1, zoom 1 to 4 with pan -1 to 1.
  */
+data class Part(val uri: Uri, val start: Long, val end: Long)
+
 data class EditSpec(
-    val keep: List<Pair<Long, Long>>, val mute: Boolean, val rotate: Int, val height: Int?,
+    val keep: List<Part>, val mute: Boolean, val rotate: Int, val height: Int?,
     val brightness: Float = 0f, val contrast: Float = 0f, val saturation: Float = 0f, val warmth: Float = 0f,
     val zoom: Float = 1f, val panX: Float = 0f, val panY: Float = 0f,
     val volume: Float = 1f, val speed: Float = 1f,
     val caption: String = "", val music: Uri? = null, val musicVolume: Float = 0.8f,
+    /** Width and height every clip is fitted into when the movie joins clips of different shapes. */
+    val canvas: Pair<Int, Int>? = null,
 )
 
 /** Video edits with Media3 Transformer. Must be started on the main thread. */
@@ -125,7 +139,8 @@ object Editor {
         }
         if (!preview) {
             if (spec.rotate % 360 != 0) add(ScaleAndRotateTransformation.Builder().setRotationDegrees(spec.rotate.toFloat()).build())
-            spec.height?.let { add(Presentation.createForHeight(it)) }
+            if (spec.canvas != null) add(Presentation.createForWidthAndHeight(spec.canvas.first, spec.canvas.second, Presentation.LAYOUT_SCALE_TO_FIT))
+            else spec.height?.let { add(Presentation.createForHeight(it)) }
         }
     }
 
@@ -136,7 +151,7 @@ object Editor {
             putChannelMixingMatrix(androidx.media3.common.audio.ChannelMixingMatrix.create(2, 2).scaleBy(v))
         }
 
-    fun export(c: Context, src: Uri, spec: EditSpec, out: File, onDone: (Result<File>) -> Unit): () -> Int {
+    fun export(c: Context, spec: EditSpec, out: File, onDone: (Result<File>) -> Unit): () -> Int {
         val video = videoEffects(spec, preview = false).toMutableList()
         val audio = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
         if (kotlin.math.abs(spec.volume - 1f) > .01f) audio += volumeProcessor(spec.volume)
@@ -150,14 +165,14 @@ object Editor {
             audio += pair.first; video += pair.second
         }
         // Each kept part becomes a clip; the clips play back to back in one new video.
-        val clips = spec.keep.filter { it.second - it.first >= 100 }.map { (a, b) ->
-            val item = MediaItem.Builder().setUri(src).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(a).setEndPositionMs(b).build()).build()
+        val clips = spec.keep.filter { it.end - it.start >= 100 }.map { (u, a, b) ->
+            val item = MediaItem.Builder().setUri(u).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(a).setEndPositionMs(b).build()).build()
             EditedMediaItem.Builder(item).setRemoveAudio(spec.mute).setEffects(Effects(audio, video)).build()
         }
         require(clips.isNotEmpty()) { "Keep at least one part of the video" }
         val sequences = mutableListOf(androidx.media3.transformer.EditedMediaItemSequence(clips))
         spec.music?.let { m ->
-            val total = (spec.keep.sumOf { it.second - it.first } / spec.speed.coerceAtLeast(.1f)).toLong()
+            val total = (spec.keep.sumOf { it.end - it.start } / spec.speed.coerceAtLeast(.1f)).toLong()
             val track = MediaItem.Builder().setUri(m).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(0).setEndPositionMs(total).build()).build()
             val item = EditedMediaItem.Builder(track).setRemoveVideo(true).setEffects(Effects(listOf(volumeProcessor(spec.musicVolume)), emptyList())).build()
             sequences += androidx.media3.transformer.EditedMediaItemSequence(listOf(item))
