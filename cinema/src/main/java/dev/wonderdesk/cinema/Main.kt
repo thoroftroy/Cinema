@@ -233,6 +233,13 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(30 to "30 s", 60 to "1 min", 120 to "2 min", 300 to "5 min").forEach { (v, n) -> Chip(n, sens == v, { sens = v; context.prefs("cinema").edit().putInt("seekSens", v).apply() }) } }
                 }
             }
+            Panel(title = "Subtitles", footer = "Applies the next time you open a video.") {
+                var ss by remember { mutableIntStateOf(context.cInt("subSize", 100)) }
+                Column(Modifier.padding(16.dp, 10.dp)) { Text("Subtitle size: $ss%", style = MaterialTheme.typography.labelLarge); Slider(ss.toFloat(), { ss = it.toInt() }, valueRange = 60f..250f, onValueChangeFinished = { context.prefs("cinema").edit().putInt("subSize", ss).apply() }) }
+                PanelDivider()
+                var sb by remember { mutableStateOf(context.cBool("subBox", false)) }
+                SwitchRow("Dark box behind subtitles", sb, { sb = it; context.prefs("cinema").edit().putBoolean("subBox", it).apply() }, subtitle = "Off shows white text with an outline", icon = WonderIcons.Translate, tint = Color(0xFF1E7FE8))
+            }
             Panel(title = "Library") {
                 var minLen by remember { mutableIntStateOf(context.cInt("minLen", 0)) }
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -431,7 +438,9 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     val subPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { subtitle = it }
     BackHandler { if (locked) hud = "Unlock first" else onClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView({ ctx -> PlayerView(ctx).apply { useController = false; this.player = player; setShutterBackgroundColor(android.graphics.Color.BLACK) } }, Modifier.fillMaxSize(),
+        AndroidView({ ctx -> PlayerView(ctx).apply { useController = false; this.player = player; setShutterBackgroundColor(android.graphics.Color.BLACK)
+            subtitleView?.setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * ctx.cInt("subSize", 100) / 100f)
+            if (!ctx.cBool("subBox", false)) subtitleView?.setStyle(androidx.media3.ui.CaptionStyleCompat(android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null)) } }, Modifier.fillMaxSize(),
             update = { it.resizeMode = resize })
         if (inPip) return@Box
         // Gesture layer: tap toggles controls, double-tap seeks, drags change position/brightness/volume, pinch fills.

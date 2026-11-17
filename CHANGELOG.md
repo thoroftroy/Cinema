@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.15
+
+- New subtitle settings: text size, and a dark box or outlined white text
+
 ## v0.5.14
 
 - Text size and accent colour chosen in Control Room now apply here
