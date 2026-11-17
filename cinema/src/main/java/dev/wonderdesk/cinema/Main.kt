@@ -105,6 +105,9 @@ private val APP_NEEDS by lazy { listOf(
 private const val ABOUT = "Cinema plays every video on your phone: resume where you left off, swipe to seek or change brightness and volume, pick audio and subtitle tracks, " +
     "load your own subtitles, change speed, and keep watching in picture-in-picture. Its editor trims clips, removes sound, rotates, shrinks for sharing and saves still frames."
 
+private fun Context.cInt(k: String, d: Int) = prefs("cinema").getInt(k, d)
+private fun Context.cBool(k: String, d: Boolean) = prefs("cinema").getBoolean(k, d)
+
 private fun timeText(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60) }
 
 @Composable
@@ -161,7 +164,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     var q by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableIntStateOf(0) }
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(granted, tick) { if (granted) videos = withContext(Dispatchers.IO) { Videos.all(context) } }
+    LaunchedEffect(granted, tick) { if (granted) videos = withContext(Dispatchers.IO) { Videos.all(context).filter { it.duration >= context.cInt("minLen", 0) * 1000L } } }
     WonderApp(needs = APP_NEEDS, appName = "Cinema", about = ABOUT,
         tabs = listOf(WonderTab("all", "Videos", WonderIcons.VideoLibrary), WonderTab("folders", "Folders", WonderIcons.Folder), WonderTab("record", "Record", WonderIcons.Videocam)),
         selectedTab = tab, onTab = { tab = it; folder = null }, title = folder ?: "Cinema", onBack = folder?.let { { folder = null } },
@@ -179,6 +182,64 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                 var resume by remember { mutableStateOf(context.prefs("cinema").getBoolean("resume", true)) }
                 SwitchRow("Resume where you left off", resume, { resume = it; context.prefs("cinema").edit().putBoolean("resume", it).apply() },
                     icon = WonderIcons.History, tint = Color(0xFFE39A12))
+                PanelDivider()
+                var awake by remember { mutableStateOf(context.cBool("keepAwake", true)) }
+                SwitchRow("Keep the screen on while playing", awake, { awake = it; context.prefs("cinema").edit().putBoolean("keepAwake", it).apply() }, icon = WonderIcons.Visibility, tint = Color(0xFF8E44AD))
+                PanelDivider()
+                var loopD by remember { mutableStateOf(context.cBool("defaultLoop", false)) }
+                SwitchRow("Repeat each video by default", loopD, { loopD = it; context.prefs("cinema").edit().putBoolean("defaultLoop", it).apply() }, icon = WonderIcons.Repeat, tint = Color(0xFFE39A12))
+                PanelDivider()
+                var step by remember { mutableIntStateOf(context.cInt("seekStep", 10)) }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Skip button and double-tap jump", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(5, 10, 15, 30, 60).forEach { v -> Chip("$v s", step == v, { step = v; context.prefs("cinema").edit().putInt("seekStep", v).apply() }) } }
+                    Text("Applies the next time you open a video.", style = MaterialTheme.typography.bodySmall, color = wonderPalette().secondaryText)
+                }
+                PanelDivider()
+                var spd by remember { mutableFloatStateOf(context.prefs("cinema").getFloat("defaultSpeed", 1f)) }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Starting speed", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(.5f, .75f, 1f, 1.25f, 1.5f, 2f).forEach { v -> Chip(if (v == 1f) "Normal" else "${v}x", spd == v, { spd = v; context.prefs("cinema").edit().putFloat("defaultSpeed", v).apply() }) } }
+                }
+                PanelDivider()
+                var fit by remember { mutableIntStateOf(context.cInt("defaultFit", 0)) }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Picture fit", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Fit", "Fill", "Stretch").forEachIndexed { i, n -> Chip(n, fit == i, { fit = i; context.prefs("cinema").edit().putInt("defaultFit", i).apply() }) } }
+                }
+                PanelDivider()
+                var hide by remember { mutableIntStateOf(context.cInt("hideDelay", 35)) }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Hide the controls after", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(20 to "2 s", 35 to "3.5 s", 50 to "5 s", 80 to "8 s", 0 to "Never").forEach { (v, n) -> Chip(n, hide == v, { hide = v; context.prefs("cinema").edit().putInt("hideDelay", v).apply() }) } }
+                }
+            }
+            Panel(title = "Touch controls", footer = "Turn off any gesture you keep triggering by accident.") {
+                var gd by remember { mutableStateOf(context.cBool("gDouble", true)) }
+                SwitchRow("Double-tap to skip or pause", gd, { gd = it; context.prefs("cinema").edit().putBoolean("gDouble", it).apply() }, icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44))
+                PanelDivider()
+                var gs by remember { mutableStateOf(context.cBool("gSeek", true)) }
+                SwitchRow("Swipe sideways to seek", gs, { gs = it; context.prefs("cinema").edit().putBoolean("gSeek", it).apply() }, icon = WonderIcons.SwapHoriz, tint = Color(0xFF1E7FE8))
+                PanelDivider()
+                var gb by remember { mutableStateOf(context.cBool("gBright", true)) }
+                SwitchRow("Swipe the left side for brightness", gb, { gb = it; context.prefs("cinema").edit().putBoolean("gBright", it).apply() }, icon = WonderIcons.Visibility, tint = Color(0xFFE39A12))
+                PanelDivider()
+                var gv by remember { mutableStateOf(context.cBool("gVolume", true)) }
+                SwitchRow("Swipe the right side for volume", gv, { gv = it; context.prefs("cinema").edit().putBoolean("gVolume", it).apply() }, icon = WonderIcons.VolumeUp, tint = Color(0xFFE5483C))
+                PanelDivider()
+                var sens by remember { mutableIntStateOf(context.cInt("seekSens", 120)) }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("A full swipe across the screen seeks", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(30 to "30 s", 60 to "1 min", 120 to "2 min", 300 to "5 min").forEach { (v, n) -> Chip(n, sens == v, { sens = v; context.prefs("cinema").edit().putInt("seekSens", v).apply() }) } }
+                }
+            }
+            Panel(title = "Library") {
+                var minLen by remember { mutableIntStateOf(context.cInt("minLen", 0)) }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text("Hide videos shorter than", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(0 to "Show all", 5 to "5 s", 15 to "15 s", 60 to "1 min").forEach { (v, n) -> Chip(n, minLen == v, { minLen = v; context.prefs("cinema").edit().putInt("minLen", v).apply() }) } }
+                    Text("Pull to refresh the library after changing this.", style = MaterialTheme.typography.bodySmall, color = wonderPalette().secondaryText)
+                }
             }
         }) {
         if (tab == "record") { RecorderScreen(); return@WonderApp }
@@ -287,7 +348,8 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     val audio = remember { context.getSystemService(AudioManager::class.java) }
     var subtitle by remember { mutableStateOf<Uri?>(null) }
     val player = remember {
-        ExoPlayer.Builder(context).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build().apply {
+        ExoPlayer.Builder(context).setSeekBackIncrementMs(context.cInt("seekStep", 10) * 1000L).setSeekForwardIncrementMs(context.cInt("seekStep", 10) * 1000L).build().apply {
+            setPlaybackSpeed(context.prefs("cinema").getFloat("defaultSpeed", 1f)); repeatMode = if (context.cBool("defaultLoop", false)) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             setMediaItem(MediaItem.fromUri(uri)); prepare(); playWhenReady = true
             val resume = if (context.prefs("cinema").getBoolean("resume", true)) Resume.get(context, uri) else 0L; if (resume > 0) seekTo(resume)
         }
@@ -297,13 +359,15 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     var dur by remember { mutableLongStateOf(0L) }
     var controls by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
-    var speed by remember { mutableFloatStateOf(1f) }
-    var resize by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
-    var loop by remember { mutableStateOf(false) }
+    var speed by remember { mutableFloatStateOf(context.prefs("cinema").getFloat("defaultSpeed", 1f)) }
+    var resize by remember { mutableIntStateOf(listOf(AspectRatioFrameLayout.RESIZE_MODE_FIT, AspectRatioFrameLayout.RESIZE_MODE_ZOOM, AspectRatioFrameLayout.RESIZE_MODE_FILL)[context.cInt("defaultFit", 0).coerceIn(0, 2)]) }
+    var loop by remember { mutableStateOf(context.cBool("defaultLoop", false)) }
     var hud by remember { mutableStateOf<String?>(null) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var cast by remember { mutableStateOf<Cast.Session?>(null) }
     DisposableEffect(Unit) { onDispose { val c = cast; if (c != null) kotlinx.coroutines.MainScope().launch { c.stop() } } }
+    val hostView = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(isPlaying) { hostView.keepScreenOn = isPlaying && context.cBool("keepAwake", true); onDispose { hostView.keepScreenOn = false } }
     var landscape by remember { mutableStateOf(false) }
     // Sleep timer: pause after a set time, or when this video ends (-1).
     var sleepAt by remember { mutableLongStateOf(0L) }
@@ -340,7 +404,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             delay(if (controls && isPlaying) 250 else 2000)
         }
     }
-    LaunchedEffect(controls, isPlaying, sheet) { if (controls && isPlaying && sheet == null) { delay(3500); controls = false } }
+    LaunchedEffect(controls, isPlaying, sheet) { if (controls && isPlaying && sheet == null) { val d = context.cInt("hideDelay", 35); if (d > 0) { delay(d * 100L); controls = false } } }
     LaunchedEffect(hud) { if (hud != null) { delay(900); hud = null } }
     LaunchedEffect(sleepAt) {
         if (sleepAt > 0) { delay((sleepAt - System.currentTimeMillis()).coerceAtLeast(0)); player.pause(); hud = "Sleep timer: paused"; sleepAt = 0 }
@@ -375,7 +439,9 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             .pointerInput(locked) {
                 detectTapGestures(onTap = { controls = !controls }, onDoubleTap = { o ->
                     if (locked) return@detectTapGestures
-                    when { o.x < size.width / 3 -> { player.seekBack(); hud = "−10 s" }; o.x > size.width * 2 / 3 -> { player.seekForward(); hud = "+10 s" }
+                    val step = context.cInt("seekStep", 10)
+                    if (!context.cBool("gDouble", true)) return@detectTapGestures
+                    when { o.x < size.width / 3 -> { player.seekBack(); hud = "−$step s" }; o.x > size.width * 2 / 3 -> { player.seekForward(); hud = "+$step s" }
                         else -> { if (player.isPlaying) player.pause() else player.play() } }
                 })
             }
@@ -386,9 +452,9 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                     onDrag = { ch, d ->
                         if (mode == -1 || mode == 1) { if (kotlin.math.abs(d.x) > kotlin.math.abs(d.y) * 1.5f) mode = 2 else if (kotlin.math.abs(d.y) > 2) mode = if (mode == -1) 3 else 4 }
                         when (mode) {
-                            2 -> { acc += d.x; val target = (startPos + (acc / size.width * 120_000).toLong()).coerceIn(0, dur); player.seekTo(target); hud = "${timeText(target)} / ${timeText(dur)}" }
-                            3 -> { brightness = (brightness - d.y / size.height).coerceIn(.02f, 1f); activity.window.attributes = activity.window.attributes.apply { screenBrightness = brightness }; hud = "☀ ${(brightness * 100).toInt()}%" }
-                            4 -> { acc -= d.y; val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val step = size.height / (max * 1.5f)
+                            2 -> { if (!context.cBool("gSeek", true)) { ch.consume(); return@detectDragGestures }; acc += d.x; val target = (startPos + (acc / size.width * context.cInt("seekSens", 120) * 1000L).toLong()).coerceIn(0, dur); player.seekTo(target); hud = "${timeText(target)} / ${timeText(dur)}" }
+                            3 -> { if (!context.cBool("gBright", true)) { ch.consume(); return@detectDragGestures }; brightness = (brightness - d.y / size.height).coerceIn(.02f, 1f); activity.window.attributes = activity.window.attributes.apply { screenBrightness = brightness }; hud = "☀ ${(brightness * 100).toInt()}%" }
+                            4 -> { if (!context.cBool("gVolume", true)) { ch.consume(); return@detectDragGestures }; acc -= d.y; val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val step = size.height / (max * 1.5f)
                                 if (kotlin.math.abs(acc) > step) { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, if (acc > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, 0); acc = 0f }
                                 hud = "🔊 ${audio.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max}%" }
                         }

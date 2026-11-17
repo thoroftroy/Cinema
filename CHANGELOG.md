@@ -1,5 +1,10 @@
 # Cinema changelog
 
+## v0.5.13
+
+- New playback settings: skip distance, starting speed, picture fit, control hide delay, keep screen on, repeat, and a switch for every touch gesture
+- Hide short videos from the library
+
 ## v0.5.12
 
 - The editor is now a real multi-clip timeline: add videos, split, cut, reorder and remove parts, and save them as one movie, even when the videos are different shapes
