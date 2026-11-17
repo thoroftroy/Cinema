@@ -1,5 +1,11 @@
 # Cinema changelog
 
+## v0.5.18
+
+- Streaming rebuilt: a bigger buffer ahead of the picture (about 25 to 90 seconds from far away), video already fetched is kept on disk so rewinding and replaying cost nothing, and the player measures the connection
+- Opening and buffering now say what is happening: a loading card while the first seconds arrive, a Buffering card with how much is ready and how fast the source is sending compared with what the video needs, and a warning when no data is arriving
+- A buffered bar and a seconds-buffered readout show under the seek bar for videos from a computer or the network
+
 ## v0.5.17
 
 - New setting: the size the editor saves videos at

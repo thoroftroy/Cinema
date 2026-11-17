@@ -363,13 +363,26 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     val audio = remember { context.getSystemService(AudioManager::class.java) }
     var subtitle by remember { mutableStateOf<Uri?>(null) }
     val player = remember {
-        ExoPlayer.Builder(context).setSeekBackIncrementMs(context.cInt("seekStep", 10) * 1000L).setSeekForwardIncrementMs(context.cInt("seekStep", 10) * 1000L).build().apply {
+        Streaming.builder(context, uri).setSeekBackIncrementMs(context.cInt("seekStep", 10) * 1000L).setSeekForwardIncrementMs(context.cInt("seekStep", 10) * 1000L).build().apply {
             setPlaybackSpeed(context.prefs("cinema").getFloat("defaultSpeed", 1f)); repeatMode = if (context.cBool("defaultLoop", false)) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            setMediaItem(MediaItem.fromUri(uri)); prepare(); playWhenReady = true
+            setMediaItem(Streaming.item(uri)); prepare(); playWhenReady = true
             val resume = if (context.prefs("cinema").getBoolean("resume", true)) Resume.get(context, uri) else 0L; if (resume > 0) seekTo(resume)
         }
     }
     var isPlaying by remember { mutableStateOf(true) }
+    // What the player is waiting for, so it can be said out loud instead of leaving a black screen.
+    val remote = remember(uri) { Streaming.isRemote(uri) }
+    var firstFrame by remember { mutableStateOf(false) }
+    var stalled by remember { mutableStateOf(true) }          // buffering right now
+    var aheadMs by remember { mutableLongStateOf(0L) }       // video already fetched beyond the picture
+    var bufferedFrac by remember { mutableFloatStateOf(0f) }
+    var bps by remember { mutableLongStateOf(0L) }           // measured speed of the source
+    var openedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var waited by remember { mutableLongStateOf(0L) }
+    var streamError by remember { mutableStateOf<String?>(null) }
+    var lastBuf by remember { mutableLongStateOf(-1L) }
+    var lastBufAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var idleMs by remember { mutableLongStateOf(0L) }          // how long no new video has arrived
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     var controls by remember { mutableStateOf(true) }
@@ -395,6 +408,12 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     DisposableEffect(Unit) {
         val l = object : Player.Listener {
             override fun onIsPlayingChanged(p: Boolean) { isPlaying = p; MainActivity.playing.value = p }
+            override fun onRenderedFirstFrame() { firstFrame = true }
+            override fun onPlaybackStateChanged(state: Int) { stalled = state == Player.STATE_BUFFERING; if (state == Player.STATE_READY) streamError = null }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) { streamError = when (error.errorCode) {
+                androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Lost the connection to the source. Check that it is still reachable, then try again."
+                androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "The source no longer has this file."
+                else -> "Couldn't play this video: " + (error.cause?.message ?: error.message ?: "unknown problem") } }
             override fun onVideoSizeChanged(v: androidx.media3.common.VideoSize) {
                 if (context.cBool("autoLandscape", false) && v.width > v.height && !landscape) { landscape = true; activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
             }
@@ -418,8 +437,16 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
         var saved = 0L
         while (true) {
             pos = player.currentPosition; dur = player.duration.coerceAtLeast(0)
+            if (remote || stalled || !firstFrame) {
+                aheadMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0)
+                bufferedFrac = if (dur > 0) (player.bufferedPosition.toFloat() / dur).coerceIn(0f, 1f) else 0f
+                bps = Streaming.bitsPerSecond(context); waited = System.currentTimeMillis() - openedAt
+                val bp = player.bufferedPosition; val now = System.currentTimeMillis()
+                if (bp != lastBuf) { lastBuf = bp; lastBufAt = now }
+                idleMs = if (stalled || !firstFrame) now - lastBufAt else 0L
+            }
             if (kotlin.math.abs(pos - saved) > 10_000) { Resume.set(context, uri, pos, dur); saved = pos }
-            delay(if (controls && isPlaying) 250 else 2000)
+            delay(if (stalled || !firstFrame) 300 else if (controls && isPlaying) 250 else 2000)
         }
     }
     LaunchedEffect(controls, isPlaying, sheet) { if (controls && isPlaying && sheet == null) { val d = context.cInt("hideDelay", 35); if (d > 0) { delay(d * 100L); controls = false } } }
@@ -483,6 +510,8 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             }
             .pointerInput(locked) { if (!locked) detectTransformGestures { _, _, zoom, _ -> if (zoom > 1.05f) { resize = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; hud = "Fill screen" } else if (zoom < .95f) { resize = AspectRatioFrameLayout.RESIZE_MODE_FIT; hud = "Fit" } } })
         hud?.let { Text(it, Modifier.align(Alignment.Center).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = .6f)).padding(16.dp, 10.dp), color = Color.White, style = MaterialTheme.typography.titleLarge) }
+        // Opening or running dry: say so, with how much is ready and how fast the source is.
+        if (!inPip && (streamError != null || !firstFrame || stalled)) StreamCard(Modifier.align(Alignment.Center), title, firstFrame, aheadMs, waited, bps, player.videoFormat?.bitrate?.toLong()?.takeIf { it > 0 } ?: 0L, remote, streamError, idleMs)
         AnimatedVisibility(controls, Modifier.fillMaxSize(), enter = fadeIn(), exit = fadeOut()) {
             Box(Modifier.fillMaxSize()) {
                 if (locked) {
@@ -528,6 +557,10 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                             hud = when (resize) { AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Fill screen"; AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Stretch"; else -> "Fit" } }) { Icon(WonderIcons.Fullscreen, "Aspect", tint = chrome.ink.copy(alpha = .85f)) }
                         IconButton(onClick = { landscape = !landscape; activity.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }) {
                             Icon(WonderIcons.RotateRight, "Rotate", tint = chrome.ink.copy(alpha = .85f)) }
+                    }
+                    if (remote) Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = .15f))) { Box(Modifier.fillMaxWidth(bufferedFrac).fillMaxHeight().background(chrome.accent.copy(alpha = .75f))) }
+                        Text("%.0f s buffered".format(aheadMs / 1000.0) + (if (bps > 0 && firstFrame) " · receiving ${"%.1f".format(bps / 1_000_000.0)} Mbit/s" else ""), color = chrome.ink.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
