@@ -1,5 +1,10 @@
 # Cinema changelog
 
+## v0.5.14
+
+- Text size and accent colour chosen in Control Room now apply here
+- New Rotate with the phone switch in Settings. Rotates by default
+
 ## v0.5.13
 
 - New playback settings: skip distance, starting speed, picture fit, control hide delay, keep screen on, repeat, and a switch for every touch gesture
