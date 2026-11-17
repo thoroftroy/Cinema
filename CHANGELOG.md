@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.17
+
+- New setting: the size the editor saves videos at
+
 ## v0.5.16
 
 - New setting: turn the screen sideways by itself for wide videos

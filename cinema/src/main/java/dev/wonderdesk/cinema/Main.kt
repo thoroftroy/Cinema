@@ -243,6 +243,11 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                 var sb by remember { mutableStateOf(context.cBool("subBox", false)) }
                 SwitchRow("Dark box behind subtitles", sb, { sb = it; context.prefs("cinema").edit().putBoolean("subBox", it).apply() }, subtitle = "Off shows white text with an outline", icon = WonderIcons.Translate, tint = Color(0xFF1E7FE8))
             }
+            Panel(title = "Editing", footer = "What the editor starts with. You can still change it for each video.") {
+                var os by remember { mutableIntStateOf(context.cInt("outSize", 0)) }
+                Column(Modifier.padding(16.dp, 10.dp)) { Text("Save videos at", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Original", "1080p", "720p", "480p").forEachIndexed { i, n -> Chip(n, os == i, { os = i; context.prefs("cinema").edit().putInt("outSize", i).apply() }) } } }
+            }
             Panel(title = "Library") {
                 var minLen by remember { mutableIntStateOf(context.cInt("minLen", 0)) }
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -638,7 +643,7 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
     fun change(n: List<Seg>) { undo.addLast(segs); if (undo.size > 40) undo.removeFirst(); segs = n }
     var mute by remember { mutableStateOf(false) }
     var rotate by remember { mutableIntStateOf(0) }
-    var outSize by remember { mutableIntStateOf(0) } // 0 original, 1 1080p, 2 720p, 3 480p
+    var outSize by remember { mutableIntStateOf(context.cInt("outSize", 0)) } // 0 original, 1 1080p, 2 720p, 3 480p
     var bright by remember { mutableFloatStateOf(0f) }
     var contrast by remember { mutableFloatStateOf(0f) }
     var sat by remember { mutableFloatStateOf(0f) }
