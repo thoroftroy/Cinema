@@ -215,6 +215,9 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                 }
             }
             Panel(title = "Touch controls", footer = "Turn off any gesture you keep triggering by accident.") {
+                var al by remember { mutableStateOf(context.cBool("autoLandscape", false)) }
+                SwitchRow("Turn sideways for wide videos", al, { al = it; context.prefs("cinema").edit().putBoolean("autoLandscape", it).apply() }, subtitle = "Rotate the screen by itself when a video is wider than it is tall", icon = WonderIcons.RotateRight, tint = Color(0xFF8E44AD))
+                PanelDivider()
                 var gd by remember { mutableStateOf(context.cBool("gDouble", true)) }
                 SwitchRow("Double-tap to skip or pause", gd, { gd = it; context.prefs("cinema").edit().putBoolean("gDouble", it).apply() }, icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44))
                 PanelDivider()
@@ -387,6 +390,9 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
     DisposableEffect(Unit) {
         val l = object : Player.Listener {
             override fun onIsPlayingChanged(p: Boolean) { isPlaying = p; MainActivity.playing.value = p }
+            override fun onVideoSizeChanged(v: androidx.media3.common.VideoSize) {
+                if (context.cBool("autoLandscape", false) && v.width > v.height && !landscape) { landscape = true; activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
+            }
         }
         player.addListener(l)
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

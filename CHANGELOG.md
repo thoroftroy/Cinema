@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.16
+
+- New setting: turn the screen sideways by itself for wide videos
+
 ## v0.5.15
 
 - New subtitle settings: text size, and a dark box or outlined white text
