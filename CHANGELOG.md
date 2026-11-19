@@ -1,5 +1,11 @@
 # Cinema changelog
 
+## v0.5.19
+
+- Screen recording and clip mode now announce themselves: a pop-up appears when recording starts, and a notification stays in the shade with a running clock and Stop, Clip and Turn off buttons. Tapping it opens the Record tab
+- The Record tab shows a live red indicator with the time while recording, and a "To record properly" checklist with a button for each missing permission (notifications, microphone, phone sound)
+- If notifications are off or blocked, recording says so before it starts and offers to fix it or record anyway, instead of silently showing only Android's own "sharing your screen" chip
+
 ## v0.5.18
 
 - Streaming rebuilt: a bigger buffer ahead of the picture (about 25 to 90 seconds from far away), video already fetched is kept on disk so rewinding and replaying cost nothing, and the player measures the connection

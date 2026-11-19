@@ -14,12 +14,14 @@ import android.service.quicksettings.TileService
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +29,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import dev.wonderdesk.shared.*
+
+/** What recording needs from Android, shown with a button to fix each one. */
+private fun recorderNeeds(cfg: CaptureConfig): List<WonderNeed> = listOfNotNull(
+    WonderNeed("Notifications", "Shows that the screen is being recorded and lets you stop or clip from the notification shade",
+        check = { c -> RecorderService.notificationsWork(c) },
+        fix = { c -> c.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, c.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }),
+    if (cfg.audio != 0) WonderNeed(if (cfg.audio == 1) "Microphone" else "Phone sound", if (cfg.audio == 1) "Needed to record your voice" else "Android treats recording phone sound as microphone access",
+        permissions = listOf(Manifest.permission.RECORD_AUDIO)) else null,
+)
 
 private fun neededPermissions(c: Context, cfg: CaptureConfig): List<String> {
     val out = mutableListOf<String>()
@@ -48,13 +59,41 @@ fun RecorderScreen() {
         else RecorderState.message = "Recording was not allowed"
     }
     fun askScreen() = capture.launch(c.getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
-    val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { askScreen() }
+    var warnNotes by remember { mutableStateOf(false) }
+    var skipWarn by remember { mutableStateOf(false) }
+    val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { if (!skipWarn && !RecorderService.notificationsWork(c)) warnNotes = true else askScreen() }
     fun go() {
         val need = neededPermissions(c, cfg)
-        if (need.isEmpty()) askScreen() else perms.launch(need.toTypedArray())
+        if (need.isNotEmpty()) perms.launch(need.toTypedArray())
+        else if (!skipWarn && !RecorderService.notificationsWork(c)) warnNotes = true
+        else askScreen()
     }
+    val needs = remember(cfg.audio) { recorderNeeds(cfg) }
+    val needState by rememberNeedState(needs)
+    val fixer = rememberNeedFixer()
+    val missing = needs.filter { needState[it] == false }
+    if (warnNotes) WonderDialog(onDismissRequest = { warnNotes = false }, title = { Text("Notifications are off") },
+        text = { Text("Android would hide the recording notification, so you could not stop or clip from the notification shade. Turn them on first, or record anyway and use the Record tab to stop.") },
+        confirmButton = { TextButton(onClick = { warnNotes = false; missing.firstOrNull()?.let(fixer) }) { Text("Turn on") } },
+        dismissButton = { TextButton(onClick = { warnNotes = false; skipWarn = true; askScreen() }) { Text("Record anyway") } })
     val running = RecorderState.running
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (running) Panel {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(12.dp).background(androidx.compose.ui.graphics.Color(0xFFE53935), androidx.compose.foundation.shape.CircleShape))
+                    Spacer(Modifier.width(10.dp))
+                    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+                    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(1000); now = System.currentTimeMillis() } }
+                    val secs = ((now - RecorderState.startedAt) / 1000).coerceAtLeast(0)
+                    Text((if (RecorderState.clipMode && !RecorderState.writing) "Clip mode on" else "Recording") + "  %d:%02d".format(secs / 60, secs % 60), style = MaterialTheme.typography.titleMedium)
+                }
+                if (!RecorderService.notificationsWork(c)) Text("Notifications are off, so Android is not showing the recording in the notification shade. Turn them on below.", Modifier.padding(top = 6.dp), color = p.warning, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (missing.isNotEmpty() || !running) {
+            Panel(title = if (missing.isEmpty()) "Everything is ready" else "To record properly") { NeedsList(needs, needState, fixer) }
+        }
         Panel(title = if (running) (if (RecorderState.clipMode) "Clip mode is on" else "Recording the screen") else "Record the screen") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 when {
@@ -145,7 +184,11 @@ class RecordActivity : ComponentActivity() {
         finish()
     }
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { askScreen() }
-    private fun askScreen() = screen.launch(getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
+    private fun askScreen() {
+        if (!RecorderService.notificationsWork(this)) android.widget.Toast.makeText(this, "Notifications are off for Cinema, so the recording is not shown in the notification shade. Turn them on in Cinema's Record tab.", android.widget.Toast.LENGTH_LONG).show()
+        askProjection()
+    }
+    private fun askProjection() = screen.launch(getSystemService(MediaProjectionManager::class.java).createScreenCaptureIntent())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

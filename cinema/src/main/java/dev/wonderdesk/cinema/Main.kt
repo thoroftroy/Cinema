@@ -93,6 +93,8 @@ class MainActivity : WonderActivity() {
         val pip = mutableStateOf(false)
         val playing = mutableStateOf(false)
         val autoPip = mutableStateOf(true)
+        /** A tab the recording notification asks to open. */
+        val wantTab = mutableStateOf<String?>(null)
         fun enterPip(a: Activity) { runCatching { a.enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()) } }
     }
 }
@@ -120,6 +122,7 @@ fun CinemaApp() {
     LaunchedEffect(incoming) {
         val i = incoming ?: (context as ComponentActivity).intent
         MainActivity.incoming.value = null; (context as ComponentActivity).intent = Intent()
+        i?.getStringExtra("tab")?.let { MainActivity.wantTab.value = it }
         val u = i?.data ?: return@LaunchedEffect
         if (i.action == Intent.ACTION_EDIT || i.action == "dev.wonderdesk.cinema.EDIT") editing = u to context.displayName(u) else playingItem = u to context.displayName(u)
     }
@@ -160,6 +163,8 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     }
     var videos by remember { mutableStateOf<List<Video>?>(null) }
     var tab by rememberSaveable { mutableStateOf("all") }
+    val wantTab by MainActivity.wantTab
+    LaunchedEffect(wantTab) { wantTab?.let { tab = it; MainActivity.wantTab.value = null } }
     var folder by rememberSaveable { mutableStateOf<String?>(null) }
     var q by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableIntStateOf(0) }

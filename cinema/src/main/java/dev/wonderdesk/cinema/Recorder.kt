@@ -354,6 +354,7 @@ class RecorderService : Service() {
         }
         RecorderState.running = true; RecorderState.clipMode = cfg.clipMode; RecorderState.startedAt = System.currentTimeMillis(); RecorderState.message = ""
         refreshNotice()
+        announce()
     }
 
     private fun fail(msg: String) {
@@ -397,14 +398,25 @@ class RecorderService : Service() {
         }.start()
     }
 
-    private fun ensureChannel() {
-        val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL) == null) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Screen recording", NotificationManager.IMPORTANCE_LOW))
-    }
+    private fun ensureChannel() = ensureChannels(this)
 
     private fun action(label: String, act: String, req: Int): NotificationCompat.Action {
         val pi = PendingIntent.getService(this, req, Intent(this, RecorderService::class.java).setAction(act), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Action.Builder(0, label, pi).build()
+    }
+
+    private fun openRecordTab() = PendingIntent.getActivity(this, 7, Intent(this, MainActivity::class.java).putExtra("tab", "record").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+    /** A short heads-up when recording begins, so it is obvious that something is capturing the screen and how to manage it. */
+    private fun announce() {
+        val clip = CaptureConfig.load(this).clipMode
+        val b = NotificationCompat.Builder(this, ALERT_CHANNEL).setSmallIcon(R.drawable.ic_tile_record).setAutoCancel(true).setTimeoutAfter(7000)
+            .setCategory(NotificationCompat.CATEGORY_STATUS).setPriority(NotificationCompat.PRIORITY_HIGH).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentTitle(if (clip) "Clip mode is on" else "Cinema is recording your screen")
+            .setContentText(if (clip) "Tap Clip to keep the last few seconds. Nothing else is saved." else "Pull down the notification shade any time to stop and save.")
+            .setContentIntent(openRecordTab())
+        if (clip) b.addAction(action("Clip", ACTION_CLIP, 11)).addAction(action("Turn off", ACTION_STOP, 12)) else b.addAction(action("Stop and save", ACTION_STOP, 12))
+        runCatching { getSystemService(NotificationManager::class.java).notify(ALERT_ID, b.build()) }
     }
 
     private fun refreshNotice() {
@@ -412,8 +424,10 @@ class RecorderService : Service() {
     }
 
     private fun notice(): Notification {
-        val b = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(applicationInfo.icon).setOngoing(true).setOnlyAlertOnce(true)
-            .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+        val b = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_tile_record).setOngoing(true).setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setContentIntent(openRecordTab())
         val c = CaptureConfig.load(this)
         if (c.clipMode && !RecorderState.writing) {
             b.setContentTitle("Clip mode is on").setContentText("Nothing is kept except the last ${c.bufferSec} seconds. Tap Clip to save them.")
@@ -440,8 +454,32 @@ class RecorderService : Service() {
         const val ACTION_STOP = "dev.wonderdesk.cinema.REC_STOP"
         const val ACTION_CLIP = "dev.wonderdesk.cinema.REC_CLIP"
         const val ACTION_END_CLIP = "dev.wonderdesk.cinema.REC_END_CLIP"
-        private const val CHANNEL = "recorder"
+        private const val CHANNEL = "recorder_live"
+        private const val ALERT_CHANNEL = "recorder_alert"
         private const val NOTE_ID = 4711
+        private const val ALERT_ID = 4712
+
+        fun ensureChannels(c: Context) {
+            val nm = c.getSystemService(NotificationManager::class.java)
+            // The old low-importance channel cannot be raised, so the live one has a new id.
+            runCatching { nm.deleteNotificationChannel("recorder") }
+            if (nm.getNotificationChannel(CHANNEL) == null) nm.createNotificationChannel(NotificationChannel(CHANNEL, "Screen recording", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Shows while Cinema is recording the screen, with buttons to stop or clip"
+                setSound(null, null); enableVibration(false); setShowBadge(false); lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            })
+            if (nm.getNotificationChannel(ALERT_CHANNEL) == null) nm.createNotificationChannel(NotificationChannel(ALERT_CHANNEL, "Recording started", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "A short pop-up when a screen recording or clip mode starts"
+                setSound(null, null); enableVibration(false); setShowBadge(false)
+            })
+        }
+
+        /** True when Android would actually show the recording notification. */
+        fun notificationsWork(c: Context): Boolean {
+            if (!androidx.core.app.NotificationManagerCompat.from(c).areNotificationsEnabled()) return false
+            ensureChannels(c)
+            val nm = c.getSystemService(NotificationManager::class.java)
+            return nm.getNotificationChannel(CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
+        }
 
         fun start(c: Context, resultCode: Int, data: Intent) =
             ContextCompat.startForegroundService(c, Intent(c, RecorderService::class.java).setAction(ACTION_START).putExtra("code", resultCode).putExtra("data", data))
