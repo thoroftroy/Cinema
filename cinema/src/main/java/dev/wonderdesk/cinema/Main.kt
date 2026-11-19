@@ -50,6 +50,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -129,16 +133,20 @@ fun CinemaApp() {
     val p = playingItem; val e = editing
     when {
         e != null -> EditorScreen(e.first, e.second, onClose = { editing = null })
-        p != null -> key(p.first) { PlayerScreen(p.first, p.second, onClose = { playingItem = null }, onEdit = { editing = p; playingItem = null }, onEnded = {
-            // Next video in the same folder, by name: episodes play in order.
-            scope.launch {
-                val next = withContext(Dispatchers.IO) { runCatching {
-                    val all = Videos.all(context); val cur = all.find { it.uri == p.first } ?: return@runCatching null
-                    all.filter { it.path == cur.path }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }).let { l -> l.getOrNull(l.indexOf(cur) + 1) }
-                }.getOrNull() }
-                if (next != null && playingItem?.first == p.first) playingItem = next.uri to next.title
+        p != null -> key(p.first) {
+            // Next or previous video in the same folder, by name: episodes play in order.
+            fun step(delta: Int, wholeLibrary: Boolean = false) {
+                scope.launch {
+                    val next = withContext(Dispatchers.IO) { runCatching {
+                        val all = Videos.all(context); val cur = all.find { it.uri == p.first } ?: return@runCatching null
+                        (if (wholeLibrary) all else all.filter { it.path == cur.path }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })).let { l -> l.getOrNull(l.indexOf(cur) + delta) }
+                    }.getOrNull() }
+                    if (next != null && playingItem?.first == p.first) playingItem = next.uri to next.title
+                    else if (delta != 0) android.widget.Toast.makeText(context, if (delta > 0) "That is the last video" else "That is the first video", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
-        }) }
+            PlayerScreen(p.first, p.second, onClose = { playingItem = null }, onEdit = { editing = p; playingItem = null }, onEnded = { step(1) }, onStep = { step(it, wholeLibrary = true) }, onDeleted = { playingItem = null })
+        }
         else -> LibraryScreen(onPlay = { playingItem = it.uri to it.title }, onEdit = { editing = it.uri to it.title })
     }
 }
@@ -169,6 +177,15 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
     var q by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableIntStateOf(0) }
     var tick by remember { mutableIntStateOf(0) }
+    // Screen recordings and clips saved while this screen is open show up straight away, newest first.
+    val savedCount = RecorderState.saved
+    LaunchedEffect(savedCount) { if (savedCount > 0) tick++ }
+    var askDelete by remember { mutableStateOf<Video?>(null) }
+    val deleteAsk = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) { tick++ }
+    askDelete?.let { v -> ConfirmDialog("Delete this video?", "“${v.title}” is removed from your phone.", "Delete", {
+        askDelete = null
+        VideoDeleter.delete(context, v.uri, ask = { deleteAsk.launch(androidx.activity.result.IntentSenderRequest.Builder(it).build()) }, done = { tick++ }, fail = { android.widget.Toast.makeText(context, "Couldn't delete it", android.widget.Toast.LENGTH_SHORT).show() })
+    }, { askDelete = null }, danger = true) }
     LaunchedEffect(granted, tick) { if (granted) videos = withContext(Dispatchers.IO) { Videos.all(context).filter { it.duration >= context.cInt("minLen", 0) * 1000L } } }
     WonderApp(needs = APP_NEEDS, appName = "Cinema", about = ABOUT,
         tabs = listOf(WonderTab("all", "Videos", WonderIcons.VideoLibrary), WonderTab("folders", "Folders", WonderIcons.Folder), WonderTab("record", "Record", WonderIcons.Videocam)),
@@ -225,6 +242,9 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                 PanelDivider()
                 var gd by remember { mutableStateOf(context.cBool("gDouble", true)) }
                 SwitchRow("Double-tap to skip or pause", gd, { gd = it; context.prefs("cinema").edit().putBoolean("gDouble", it).apply() }, icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44))
+                PanelDivider()
+                var sv by remember { mutableStateOf(context.cBool("gSwipeVideo", true)) }
+                SwitchRow("Swipe sideways to change video", sv, { sv = it; context.prefs("cinema").edit().putBoolean("gSwipeVideo", it).apply() }, subtitle = "Swipe left for the next video in the folder, right for the previous one. Turn off to swipe to seek instead", icon = WonderIcons.SkipNext, tint = Color(0xFF1E7FE8))
                 PanelDivider()
                 var gs by remember { mutableStateOf(context.cBool("gSeek", true)) }
                 SwitchRow("Swipe sideways to seek", gs, { gs = it; context.prefs("cinema").edit().putBoolean("gSeek", it).apply() }, icon = WonderIcons.SwapHoriz, tint = Color(0xFF1E7FE8))
@@ -313,7 +333,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel(if (folder != null) folder!! else "All videos", Modifier.padding(start = 6.dp)) }
             }
-            items(shown, key = { it.id }) { v -> VideoCard(v, onPlay = { onPlay(v) }, onEdit = { onEdit(v) }) }
+            items(shown, key = { it.id }) { v -> VideoCard(v, onPlay = { onPlay(v) }, onEdit = { onEdit(v) }, onDelete = { askDelete = v }) }
         }
     }
 }
@@ -333,7 +353,7 @@ private fun Thumb(v: Video, modifier: Modifier) {
 }
 
 @Composable
-private fun VideoCard(v: Video, onPlay: () -> Unit, onEdit: () -> Unit) {
+private fun VideoCard(v: Video, onPlay: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     val p = wonderPalette()
     var menu by remember { mutableStateOf(false) }
@@ -350,6 +370,7 @@ private fun VideoCard(v: Video, onPlay: () -> Unit, onEdit: () -> Unit) {
                     DropdownMenuItem({ Text("Play") }, { menu = false; onPlay() }, leadingIcon = { Icon(WonderIcons.PlayArrow, null) })
                     DropdownMenuItem({ Text("Edit or trim") }, { menu = false; onEdit() }, leadingIcon = { Icon(WonderIcons.ContentCut, null) })
                     DropdownMenuItem({ Text("Share") }, { menu = false; context.share(v.uri, "video/*") {} }, leadingIcon = { Icon(WonderIcons.Share, null) })
+                    DropdownMenuItem({ Text("Delete", color = p.danger) }, { menu = false; onDelete() }, leadingIcon = { Icon(WonderIcons.Delete, null, tint = p.danger) })
                     DropdownMenuItem({ Text("Show in Wayfinder") }, { menu = false
                         val path = "/storage/emulated/0/" + v.path + v.title
                         context.launchSafely(Intent("dev.wonderdesk.wayfinder.SHOW").setPackage("dev.wonderdesk.wayfinder").putExtra("path", path)) {} }, leadingIcon = { Icon(WonderIcons.FolderOpen, null) })
@@ -362,7 +383,7 @@ private fun VideoCard(v: Video, onPlay: () -> Unit, onEdit: () -> Unit) {
 /* -------------------------------------------------------- player -------------------------------------------- */
 
 @Composable
-private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: () -> Unit, onEnded: () -> Unit = {}) {
+private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: () -> Unit, onEnded: () -> Unit = {}, onStep: (Int) -> Unit = {}, onDeleted: () -> Unit = {}) {
     val context = LocalContext.current
     val activity = context as Activity
     val audio = remember { context.getSystemService(AudioManager::class.java) }
@@ -374,6 +395,7 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             val resume = if (context.prefs("cinema").getBoolean("resume", true)) Resume.get(context, uri) else 0L; if (resume > 0) seekTo(resume)
         }
     }
+    val deleteAsk = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) { r -> if (r.resultCode == Activity.RESULT_OK) onDeleted() }
     var isPlaying by remember { mutableStateOf(true) }
     // What the player is waiting for, so it can be said out loud instead of leaving a black screen.
     val remote = remember(uri) { Streaming.isRemote(uri) }
@@ -500,11 +522,13 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
             .pointerInput(locked) {
                 if (locked) return@pointerInput
                 var mode = 0; var startPos = 0L; var acc = 0f
-                detectDragGestures(onDragStart = { o -> mode = 0; acc = 0f; startPos = player.currentPosition; mode = if (o.x < size.width / 2) -1 else 1 },
+                val swipeVideo = context.cBool("gSwipeVideo", true)
+                detectDragGestures(onDragEnd = { if (mode == 2 && swipeVideo && kotlin.math.abs(acc) > size.width * .22f) onStep(if (acc < 0) 1 else -1); hud = null }, onDragStart = { o -> mode = 0; acc = 0f; startPos = player.currentPosition; mode = if (o.x < size.width / 2) -1 else 1 },
                     onDrag = { ch, d ->
                         if (mode == -1 || mode == 1) { if (kotlin.math.abs(d.x) > kotlin.math.abs(d.y) * 1.5f) mode = 2 else if (kotlin.math.abs(d.y) > 2) mode = if (mode == -1) 3 else 4 }
                         when (mode) {
-                            2 -> { if (!context.cBool("gSeek", true)) { ch.consume(); return@detectDragGestures }; acc += d.x; val target = (startPos + (acc / size.width * context.cInt("seekSens", 120) * 1000L).toLong()).coerceIn(0, dur); player.seekTo(target); hud = "${timeText(target)} / ${timeText(dur)}" }
+                            2 -> { if (swipeVideo) { acc += d.x; hud = if (kotlin.math.abs(acc) > size.width * .22f) (if (acc < 0) "Next video  ›" else "‹  Previous video") else "Swipe further for another video"; ch.consume(); return@detectDragGestures }
+                                if (!context.cBool("gSeek", true)) { ch.consume(); return@detectDragGestures }; acc += d.x; val target = (startPos + (acc / size.width * context.cInt("seekSens", 120) * 1000L).toLong()).coerceIn(0, dur); player.seekTo(target); hud = "${timeText(target)} / ${timeText(dur)}" }
                             3 -> { if (!context.cBool("gBright", true)) { ch.consume(); return@detectDragGestures }; brightness = (brightness - d.y / size.height).coerceIn(.02f, 1f); activity.window.attributes = activity.window.attributes.apply { screenBrightness = brightness }; hud = "☀ ${(brightness * 100).toInt()}%" }
                             4 -> { if (!context.cBool("gVolume", true)) { ch.consume(); return@detectDragGestures }; acc -= d.y; val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val step = size.height / (max * 1.5f)
                                 if (kotlin.math.abs(acc) > step) { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, if (acc > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, 0); acc = 0f }
@@ -513,7 +537,22 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                         ch.consume()
                     })
             }
-            .pointerInput(locked) { if (!locked) detectTransformGestures { _, _, zoom, _ -> if (zoom > 1.05f) { resize = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; hud = "Fill screen" } else if (zoom < .95f) { resize = AspectRatioFrameLayout.RESIZE_MODE_FIT; hud = "Fit" } } })
+            .pointerInput(locked) {
+                if (locked) return@pointerInput
+                // Pinch with two fingers only; a single finger must stay free for the swipe gestures above.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    var z = 1f
+                    do {
+                        val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        if (ev.changes.count { it.pressed } >= 2) {
+                            z *= ev.calculateZoom()
+                            if (z > 1.05f) { resize = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; hud = "Fill screen"; z = 1f } else if (z < .95f) { resize = AspectRatioFrameLayout.RESIZE_MODE_FIT; hud = "Fit"; z = 1f }
+                            ev.changes.forEach { it.consume() }
+                        }
+                    } while (ev.changes.any { it.pressed })
+                }
+            })
         hud?.let { Text(it, Modifier.align(Alignment.Center).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = .6f)).padding(16.dp, 10.dp), color = Color.White, style = MaterialTheme.typography.titleLarge) }
         // Opening or running dry: say so, with how much is ready and how fast the source is.
         if (!inPip && (streamError != null || !firstFrame || stalled)) StreamCard(Modifier.align(Alignment.Center), title, firstFrame, aheadMs, waited, bps, player.videoFormat?.bitrate?.toLong()?.takeIf { it > 0 } ?: 0L, remote, streamError, idleMs)
@@ -545,11 +584,15 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                         IconButton(onClick = { loop = !loop; player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF; hud = if (loop) "Loop on" else "Loop off" }) {
                             Icon(WonderIcons.Repeat, "Loop", tint = if (loop) chrome.accent else chrome.ink.copy(alpha = .85f)) }
                         Spacer(Modifier.weight(1f))
+                        HudButton(WonderIcons.SkipPrevious, "Previous video", chrome) { onStep(-1) }
+                        Spacer(Modifier.width(10.dp))
                         HudButton(WonderIcons.Replay10, "Back 10 seconds", chrome) { player.seekBack() }
                         Spacer(Modifier.width(14.dp))
                         GelPlay(isPlaying, chrome) { if (player.isPlaying) player.pause() else { if (player.playbackState == Player.STATE_ENDED) player.seekTo(0); player.play() } }
                         Spacer(Modifier.width(14.dp))
                         HudButton(WonderIcons.Forward10, "Forward 10 seconds", chrome) { player.seekForward() }
+                        Spacer(Modifier.width(10.dp))
+                        HudButton(WonderIcons.SkipNext, "Next video", chrome) { onStep(1) }
                         Spacer(Modifier.weight(1f))
                         Text("${if (speed % 1 == 0f) speed.toInt() else speed}×", Modifier.clip(RoundedCornerShape(8.dp)).clickable { sheet = "speed" }.padding(10.dp), color = chrome.ink, style = MaterialTheme.typography.labelLarge)
                         IconButton(onClick = onEdit) { Icon(WonderIcons.ContentCut, "Edit", tint = chrome.ink.copy(alpha = .85f)) }
@@ -581,6 +624,10 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                 }
             }
         }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Done") } })
+        "delete" -> ConfirmDialog("Delete this video?", "“$title” is removed from your phone.", "Delete", {
+            sheet = null; player.pause()
+            VideoDeleter.delete(context, uri, ask = { sender -> deleteAsk.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build()) }, done = { onDeleted() }, fail = { hud = "Couldn't delete it" })
+        }, { sheet = null }, danger = true)
         "sleep" -> WonderDialog(onDismissRequest = { sheet = null }, title = { Text("Sleep timer") }, text = {
             Panel {
                 listOf(15, 30, 45, 60, 90).forEachIndexed { i, m -> if (i > 0) PanelDivider(16.dp)
@@ -619,6 +666,8 @@ private fun PlayerScreen(uri: Uri, title: String, onClose: () -> Unit, onEdit: (
                     })
                 PanelDivider()
                 ListRow("Share video", icon = WonderIcons.Share, tint = Color(0xFF1E7FE8), onClick = { sheet = null; context.share(uri, "video/*") {} })
+                PanelDivider()
+                ListRow("Delete video", icon = WonderIcons.Delete, tint = Color(0xFFE5483C), danger = true, onClick = { sheet = "delete" })
             }
         }, confirmButton = { TextButton(onClick = { sheet = null }) { Text("Close") } })
     }

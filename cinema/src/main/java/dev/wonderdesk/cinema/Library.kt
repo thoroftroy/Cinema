@@ -77,6 +77,21 @@ object Videos {
     }
 }
 
+/** Deletes a video from the phone. Android asks the person to confirm for files Cinema did not create. */
+object VideoDeleter {
+    fun delete(c: Context, uri: Uri, ask: (android.content.IntentSender) -> Unit, done: () -> Unit, fail: () -> Unit) {
+        try {
+            if (c.contentResolver.delete(uri, null, null) > 0) done() else fail()
+        } catch (e: SecurityException) {
+            val sender = runCatching {
+                if (android.os.Build.VERSION.SDK_INT >= 30) MediaStore.createDeleteRequest(c.contentResolver, listOf(uri)).intentSender
+                else (e as? android.app.RecoverableSecurityException)?.userAction?.actionIntent?.intentSender
+            }.getOrNull()
+            if (sender != null) ask(sender) else fail()
+        } catch (e: Exception) { fail() }
+    }
+}
+
 /** Remembers where you stopped each video. */
 object Resume {
     private fun prefs(c: Context) = c.getSharedPreferences("cinema-resume", Context.MODE_PRIVATE)

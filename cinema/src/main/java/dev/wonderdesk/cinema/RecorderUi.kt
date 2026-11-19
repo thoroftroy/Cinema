@@ -161,18 +161,6 @@ fun RecorderScreen() {
                 Chip("Microphone", cfg.audio == 1, { change(cfg.copy(audio = 1)) }, WonderIcons.Mic)
             }
         }
-        Panel(title = "Cast to a TV", footer = "Shows your screen, or a video you are playing, on a TV, Chromecast or any screen your phone can find. Uses Android's own cast, so nothing is sent through Wonderdesk.") {
-            Column(Modifier.padding(16.dp)) {
-                WButton("Cast this screen", {
-                    runCatching { c.startActivity(Intent(android.provider.Settings.ACTION_CAST_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        .onFailure { RecorderState.message = "This phone has no cast screen. Look for Cast or Screen mirroring in its quick settings." }
-                }, icon = WonderIcons.Cast)
-            }
-        }
-        Panel(title = "Quick start") {
-            Text("Add the Record screen tile to your quick settings (swipe down twice, tap the pencil) to start and stop recording from anywhere with your last settings.",
-                Modifier.padding(16.dp), color = p.secondaryText, style = MaterialTheme.typography.bodySmall)
-        }
     }
 }
 

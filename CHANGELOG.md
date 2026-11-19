@@ -2,6 +2,11 @@
 
 ## v0.5.19
 
+- Swipe sideways in the player to go to the next or previous video in your library (newest first), or use the new previous and next buttons beside play. A setting switches swiping back to seeking
+- The player's options sheet and every video's menu in the library now have Delete
+- Screen recordings and clips appear in the library at once, newest first
+- Cast to a TV and the Quick start note are gone from the Record tab
+
 - Screen recording and clip mode now announce themselves: a pop-up appears when recording starts, and a notification stays in the shade with a running clock and Stop, Clip and Turn off buttons. Tapping it opens the Record tab
 - The Record tab shows a live red indicator with the time while recording, and a "To record properly" checklist with a button for each missing permission (notifications, microphone, phone sound)
 - If notifications are off or blocked, recording says so before it starts and offers to fix it or record anyway, instead of silently showing only Android's own "sharing your screen" chip
