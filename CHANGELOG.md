@@ -1,5 +1,10 @@
 # Cinema changelog
 
+## v0.5.20
+
+- Fixed: swiping sideways in the player now really goes to the next or previous video in your library. The pinch-to-zoom gesture was swallowing every one-finger swipe, which also stopped swipe-to-seek from working
+- The previous and next buttons beside play follow the same order
+
 ## v0.5.19
 
 - Swipe sideways in the player to go to the next or previous video in your library (newest first), or use the new previous and next buttons beside play. A setting switches swiping back to seeking
