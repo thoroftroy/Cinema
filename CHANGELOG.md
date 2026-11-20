@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.23
+
+- Tapping Record on the Wonderdesk Launcher's floating button starts clip mode at once, and Start clip, Save clip and Stop appear on the button as a card as well as in the notification
+
 ## v0.5.22
 
 - Cinema now tells the Wonderdesk Launcher's floating button when it is recording or in clip mode, and accepts Start clip, Save clip and Stop from it. The button draws nothing while recording, so it never appears in a recording

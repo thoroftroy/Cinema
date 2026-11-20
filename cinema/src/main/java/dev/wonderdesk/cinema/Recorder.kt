@@ -429,8 +429,19 @@ class RecorderService : Service() {
         tellLauncher()
     }
 
+    /** The recording controls as a card on the floating button, the same buttons as the notification. */
+    private fun card() {
+        if (!RecorderState.running) { dev.wonderdesk.shared.WonderAssist.clear(this, "cinema", "rec"); return }
+        fun pi(act: String, req: Int) = PendingIntent.getService(this, req, Intent(this, RecorderService::class.java).setAction(act), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val clip = RecorderState.clipMode
+        val acts = if (clip) { if (RecorderState.writing) listOf("Save clip" to pi(ACTION_END_CLIP, 31), "Turn off" to pi(ACTION_STOP, 32)) else listOf("Start clip" to pi(ACTION_CLIP, 33), "Turn off" to pi(ACTION_STOP, 32)) } else listOf("Stop and save" to pi(ACTION_STOP, 32))
+        dev.wonderdesk.shared.WonderAssist.post(this, "cinema", "rec", if (clip) (if (RecorderState.writing) "Saving a clip" else "Clip mode is on") else "Recording your screen",
+            if (clip) (if (RecorderState.writing) "Recording this clip. Tap Save clip when you have what you want" else "Tap Start clip to keep the last few seconds") else "Stop and save when you are done", acts, openRecordTab(), ongoing = true)
+    }
+
     /** Lets the Wonderdesk Launcher's floating button know what the recorder is doing, so it can hide itself from the recording and offer Clip and Stop. */
     private fun tellLauncher() {
+        runCatching { card() }
         runCatching { sendBroadcast(Intent(RecorderControl.STATE).setPackage("dev.wonderdesk.launcher").putExtra("running", RecorderState.running).putExtra("clip", RecorderState.clipMode).putExtra("writing", RecorderState.writing)) }
     }
 

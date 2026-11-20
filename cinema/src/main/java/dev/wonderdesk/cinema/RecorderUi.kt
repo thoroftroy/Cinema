@@ -181,6 +181,8 @@ class RecordActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (RecorderState.running) { RecorderService.send(this, RecorderService.ACTION_STOP); finish(); return }
+        // The Wonderdesk Launcher's floating button starts a recording straight away, in clip mode unless it says otherwise.
+        if (intent.hasExtra("clip")) CaptureConfig.load(this).copy(clipMode = intent.getBooleanExtra("clip", true)).save(this)
         val need = neededPermissions(this, CaptureConfig.load(this))
         if (need.isEmpty()) askScreen() else perms.launch(need.toTypedArray())
     }
