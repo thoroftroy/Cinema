@@ -1,5 +1,11 @@
 # Cinema changelog
 
+## v0.5.21
+
+- Screen recording runs much cooler and lighter: a still screen is no longer re-encoded at the full frame rate, the encoder uses steady-quality mode at relaxed priority, normal recordings need fewer full frames, and a sound-capture loop that could spin the processor now rests. New installs start at 80% size and 6 Mbps (change them in the Record tab)
+- Fixed the video controls never coming back when you tap a playing video
+- Screen recording can be started and stopped from the Wonderdesk floating button
+
 ## v0.5.20
 
 - Fixed: swiping sideways in the player now really goes to the next or previous video in your library. The pinch-to-zoom gesture was swallowing every one-finger swipe, which also stopped swipe-to-seek from working

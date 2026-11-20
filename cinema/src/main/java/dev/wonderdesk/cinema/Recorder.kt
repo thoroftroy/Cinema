@@ -45,9 +45,9 @@ import java.util.Locale
 
 /** How a recording is made. Saved by the Record tab, read by the service and the quick tile. */
 data class CaptureConfig(
-    val scalePct: Int = 100,
+    val scalePct: Int = 80,
     val fps: Int = 30,
-    val mbps: Int = 8,
+    val mbps: Int = 6,
     /** 0 none, 1 microphone, 2 sound playing on the phone */
     val audio: Int = 0,
     /** Seconds kept in the silent buffer in clip mode, and how far back a clip reaches. */
@@ -61,7 +61,7 @@ data class CaptureConfig(
     companion object {
         fun load(c: Context): CaptureConfig {
             val p = c.getSharedPreferences("cinema", Context.MODE_PRIVATE)
-            return CaptureConfig(p.getInt("rec_scale", 100), p.getInt("rec_fps", 30), p.getInt("rec_mbps", 8), p.getInt("rec_audio", 0),
+            return CaptureConfig(p.getInt("rec_scale", 80), p.getInt("rec_fps", 30), p.getInt("rec_mbps", 6), p.getInt("rec_audio", 0),
                 p.getInt("rec_buffer", 15).coerceIn(3, 60), p.getBoolean("rec_clip", false))
         }
     }
@@ -125,9 +125,14 @@ class ScreenCapture(
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, cfg.mbps * 1_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, cfg.fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            // A still screen produces no new frames; repeat the last one so the video never stalls.
-            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 1_000_000L / cfg.fps.coerceAtLeast(1))
+            // Clips need a clean frame every second to start from; a normal recording can use fewer.
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, if (cfg.clipMode) 1 else 2)
+            // Steady quality at a lower cost, and let the phone encode at its own relaxed pace instead of racing.
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+            setInteger(MediaFormat.KEY_PRIORITY, 1)
+            // A still screen produces no new frames; repeat the last one a few times a second so the video never stalls,
+            // instead of re-encoding it at the full frame rate (which keeps the phone busy and warm for nothing).
+            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 250_000L)
         }
         val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         enc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -178,7 +183,7 @@ class ScreenCapture(
         try {
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
-                if (n <= 0) continue
+                if (n <= 0) { try { Thread.sleep(10) } catch (_: InterruptedException) { break }; continue }
                 val ptsUs = System.nanoTime() / 1000 - (n / 4) * 1_000_000L / 44100
                 val ii = codec.dequeueInputBuffer(10_000)
                 if (ii >= 0) {
