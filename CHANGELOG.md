@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.22
+
+- Cinema now tells the Wonderdesk Launcher's floating button when it is recording or in clip mode, and accepts Start clip, Save clip and Stop from it. The button draws nothing while recording, so it never appears in a recording
+
 ## v0.5.21
 
 - Screen recording runs much cooler and lighter: a still screen is no longer re-encoded at the full frame rate, the encoder uses steady-quality mode at relaxed priority, normal recordings need fewer full frames, and a sound-capture loop that could spin the processor now rests. New installs start at 80% size and 6 Mbps (change them in the Record tab)

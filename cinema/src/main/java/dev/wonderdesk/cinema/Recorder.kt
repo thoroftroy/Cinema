@@ -363,7 +363,7 @@ class RecorderService : Service() {
     }
 
     private fun fail(msg: String) {
-        RecorderState.message = msg; RecorderState.running = false
+        RecorderState.message = msg; RecorderState.running = false; tellLauncher()
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         runCatching { projection?.stop() }
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
@@ -379,7 +379,7 @@ class RecorderService : Service() {
     private fun shutDown() {
         val cap = capture
         capture = null
-        RecorderState.running = false
+        RecorderState.running = false; tellLauncher()
         if (cap == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return }
         RecorderState.savingNow = true
         Thread {
@@ -426,6 +426,12 @@ class RecorderService : Service() {
 
     private fun refreshNotice() {
         runCatching { getSystemService(NotificationManager::class.java).notify(NOTE_ID, notice()) }
+        tellLauncher()
+    }
+
+    /** Lets the Wonderdesk Launcher's floating button know what the recorder is doing, so it can hide itself from the recording and offer Clip and Stop. */
+    private fun tellLauncher() {
+        runCatching { sendBroadcast(Intent(RecorderControl.STATE).setPackage("dev.wonderdesk.launcher").putExtra("running", RecorderState.running).putExtra("clip", RecorderState.clipMode).putExtra("writing", RecorderState.writing)) }
     }
 
     private fun notice(): Notification {
@@ -450,7 +456,7 @@ class RecorderService : Service() {
     override fun onDestroy() {
         capture?.let { c -> Thread { runCatching { c.stop() } }.start() }
         capture = null
-        RecorderState.running = false; RecorderState.writing = false
+        RecorderState.running = false; RecorderState.writing = false; tellLauncher()
         super.onDestroy()
     }
 
@@ -489,5 +495,24 @@ class RecorderService : Service() {
         fun start(c: Context, resultCode: Int, data: Intent) =
             ContextCompat.startForegroundService(c, Intent(c, RecorderService::class.java).setAction(ACTION_START).putExtra("code", resultCode).putExtra("data", data))
         fun send(c: Context, action: String) = c.startService(Intent(c, RecorderService::class.java).setAction(action))
+    }
+}
+
+/** The recorder's state broadcast and the commands other Wonderdesk apps may send it (same-signature apps only). */
+object RecorderControl {
+    const val STATE = "dev.wonderdesk.cinema.REC_STATE"
+    const val CLIP = "dev.wonderdesk.cinema.CTL_CLIP"
+    const val SAVE_CLIP = "dev.wonderdesk.cinema.CTL_SAVE_CLIP"
+    const val STOP = "dev.wonderdesk.cinema.CTL_STOP"
+}
+
+class RecorderControlReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) {
+        if (!RecorderState.running) return
+        when (i.action) {
+            RecorderControl.CLIP -> RecorderService.send(c, RecorderService.ACTION_CLIP)
+            RecorderControl.SAVE_CLIP -> RecorderService.send(c, RecorderService.ACTION_END_CLIP)
+            RecorderControl.STOP -> RecorderService.send(c, RecorderService.ACTION_STOP)
+        }
     }
 }
