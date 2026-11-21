@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.5.24
+
+- Fixed a gap above the keyboard in screens with a bottom tab bar: the tab bar now steps aside while you type, so you can see what you are writing
+
 ## v0.5.23
 
 - Tapping Record on the Wonderdesk Launcher's floating button starts clip mode at once, and Start clip, Save clip and Stop appear on the button as a card as well as in the notification
