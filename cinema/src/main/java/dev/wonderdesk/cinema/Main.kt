@@ -195,18 +195,18 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
             var auto by remember { mutableStateOf(context.prefs("cinema").getBoolean("autoPip", true)) }
             Panel(title = "Playback") {
                 SwitchRow("Picture-in-picture when leaving", auto, { auto = it; MainActivity.autoPip.value = it; context.prefs("cinema").edit().putBoolean("autoPip", it).apply() },
-                    subtitle = "Keep watching in a small window", icon = WonderIcons.Layers, tint = Color(0xFF1E7FE8))
+                    subtitle = "Keep watching in a small window", icon = WonderIcons.Layers, tint = Color(0xFF1E7FE8), help = "Keeps the video playing in a small window when you leave the app.")
                 PanelDivider()
                 var next by remember { mutableStateOf(context.prefs("cinema").getBoolean("autoNext", true)) }
                 SwitchRow("Play the next video automatically", next, { next = it; context.prefs("cinema").edit().putBoolean("autoNext", it).apply() },
-                    subtitle = "When one ends, the next in the same folder starts (great for episodes)", icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44))
+                    subtitle = "When one ends, the next in the same folder starts (great for episodes)", icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44), help = "When a video ends, the next one in the list starts by itself.")
                 PanelDivider()
                 var resume by remember { mutableStateOf(context.prefs("cinema").getBoolean("resume", true)) }
                 SwitchRow("Resume where you left off", resume, { resume = it; context.prefs("cinema").edit().putBoolean("resume", it).apply() },
-                    icon = WonderIcons.History, tint = Color(0xFFE39A12))
+                    icon = WonderIcons.History, tint = Color(0xFFE39A12), help = "Starts a video from where you stopped last time.")
                 PanelDivider()
                 var awake by remember { mutableStateOf(context.cBool("keepAwake", true)) }
-                SwitchRow("Keep the screen on while playing", awake, { awake = it; context.prefs("cinema").edit().putBoolean("keepAwake", it).apply() }, icon = WonderIcons.Visibility, tint = Color(0xFF8E44AD))
+                SwitchRow("Keep the screen on while playing", awake, { awake = it; context.prefs("cinema").edit().putBoolean("keepAwake", it).apply() }, icon = WonderIcons.Visibility, tint = Color(0xFF8E44AD), help = "Stops the screen sleeping during a video.")
                 PanelDivider()
                 var loopD by remember { mutableStateOf(context.cBool("defaultLoop", false)) }
                 SwitchRow("Repeat each video by default", loopD, { loopD = it; context.prefs("cinema").edit().putBoolean("defaultLoop", it).apply() }, icon = WonderIcons.Repeat, tint = Color(0xFFE39A12))
@@ -241,7 +241,7 @@ private fun LibraryScreen(onPlay: (Video) -> Unit, onEdit: (Video) -> Unit) {
                 SwitchRow("Turn sideways for wide videos", al, { al = it; context.prefs("cinema").edit().putBoolean("autoLandscape", it).apply() }, subtitle = "Rotate the screen by itself when a video is wider than it is tall", icon = WonderIcons.RotateRight, tint = Color(0xFF8E44AD))
                 PanelDivider()
                 var gd by remember { mutableStateOf(context.cBool("gDouble", true)) }
-                SwitchRow("Double-tap to skip or pause", gd, { gd = it; context.prefs("cinema").edit().putBoolean("gDouble", it).apply() }, icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44))
+                SwitchRow("Double-tap to skip or pause", gd, { gd = it; context.prefs("cinema").edit().putBoolean("gDouble", it).apply() }, icon = WonderIcons.SkipNext, tint = Color(0xFF2E9E44), help = "Double-tap the sides to jump ahead or back, and the middle to pause.")
                 PanelDivider()
                 var sv by remember { mutableStateOf(context.cBool("gSwipeVideo", true)) }
                 SwitchRow("Swipe sideways to change video", sv, { sv = it; context.prefs("cinema").edit().putBoolean("gSwipeVideo", it).apply() }, subtitle = "Swipe left for the next video in the folder, right for the previous one. Turn off to swipe to seek instead", icon = WonderIcons.SkipNext, tint = Color(0xFF1E7FE8))
@@ -932,7 +932,7 @@ private fun EditorScreen(uri: Uri, title: String, onClose: () -> Unit) {
             }
             Panel(title = "Sound and speed", footer = "Add music, a voiceover recorded in Echo, or a sound effect. It plays along the whole video, mixed under the original sound.") {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SwitchRow("Remove the original sound", mute, { mute = it }, icon = WonderIcons.VolumeUp, tint = Color(0xFFE5483C))
+                    SwitchRow("Remove the original sound", mute, { mute = it }, icon = WonderIcons.VolumeUp, tint = Color(0xFFE5483C), help = "Mutes the video's own audio so you can use your own.")
                     SliderRow("Original volume", volume, 0f..2f, { volume = it }) { "${(it * 100).toInt()}%" }
                     Text("Speed", style = MaterialTheme.typography.labelLarge)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
