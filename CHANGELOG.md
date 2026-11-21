@@ -1,5 +1,9 @@
 # Cinema changelog
 
+## v0.6.0
+
+- Cinema has moved into Memories. This last version only explains that and opens Memories, which now has the video player, editor, screen recorder, clip mode, casting and everything else Cinema did. Your videos and recordings are untouched. You can remove Cinema once you have tried Memories
+
 ## v0.5.27
 
 - At night the animated background gets a stronger wash, so text stays easy to read on dark scenes

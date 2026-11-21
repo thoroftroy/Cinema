@@ -1,37 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <permission android:name="dev.wonderdesk.cinema.CONTROL" android:protectionLevel="signature" />
-    <application android:enableOnBackInvokedCallback="true" android:usesCleartextTraffic="true" android:label="Cinema">
-        <activity android:name=".MainActivity" android:exported="true" android:resizeableActivity="true" android:launchMode="singleTask"
-            android:supportsPictureInPicture="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
+    <application android:enableOnBackInvokedCallback="true" android:label="Cinema">
+        <activity android:name=".MainActivity" android:exported="true" android:resizeableActivity="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" /><data android:scheme="file" /><data android:mimeType="video/*" /></intent-filter>
-            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" /><data android:scheme="https" /><data android:scheme="rtsp" /><data android:mimeType="video/*" /><data android:mimeType="application/x-mpegURL" /><data android:mimeType="application/vnd.apple.mpegurl" /><data android:mimeType="application/dash+xml" /></intent-filter>
-            <intent-filter><action android:name="android.intent.action.EDIT" /><action android:name="dev.wonderdesk.cinema.EDIT" /><category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" /><data android:mimeType="video/*" /></intent-filter>
         </activity>
-        <receiver android:name=".RecorderControlReceiver" android:exported="true" android:permission="dev.wonderdesk.cinema.CONTROL"><intent-filter><action android:name="dev.wonderdesk.cinema.CTL_CLIP" /><action android:name="dev.wonderdesk.cinema.CTL_SAVE_CLIP" /><action android:name="dev.wonderdesk.cinema.CTL_STOP" /></intent-filter></receiver>
-        <service android:name=".RecorderService" android:exported="false" android:foregroundServiceType="mediaProjection|microphone" />
-        <activity android:name=".RecordActivity" android:exported="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" android:taskAffinity="" />
-        <service android:name=".RecordTile" android:exported="true" android:label="Record screen" android:icon="@drawable/ic_tile_record" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
-        </service>
-        <receiver android:name=".ContinueWidget" android:exported="true" android:label="Continue watching"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_continuewidget_info" /></receiver>
-        <activity android:name=".ContinueWidgetSetup" android:exported="true" android:label="Widget settings"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter></activity>
     </application>
-    <queries><package android:name="dev.wonderdesk.wayfinder" /></queries>
+    <queries><package android:name="dev.wonderdesk.memories" /><package android:name="dev.wonderdesk.apphub" /></queries>
 </manifest>
